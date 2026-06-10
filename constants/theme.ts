@@ -1,53 +1,65 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-import { Platform } from 'react-native';
-
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
+// Material 3 Dark Theme
 export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
+  // Backgrounds
+  background:           '#0F0E17',
+  surface:              '#1C1B23',
+  surfaceContainer:     '#252336',
+  surfaceContainerHigh: '#2E2C3B',
+
+  // Primary
+  primary:    '#A8EDBB',   // mint green — finance feel
+  onPrimary:  '#003919',
+  primaryMuted: '#A8EDBB22',
+
+  // Text
+  text:          '#E6E1E5',
+  textSecondary: '#CAC4D0',
+  textMuted:     '#49454F',
+
+  // Utility
+  border:  '#2E2C3B',
+  danger:  '#F2B8B5',
+  outline: '#938F99',
+
+  // Tab bar
+  tabBar: '#13121A',
+
+  // Trips
+  trip:   '#FFB74D',   // amber — trip expenses
+  onTrip: '#1A1000',   // dark contrast for amber backgrounds
 };
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  },
-});
+export const Categories = [
+  { id: 'food',          label: 'Food & Drink',  icon: 'food',                  emoji: '🍔', color: '#FFB4A2' },
+  { id: 'transport',     label: 'Transport',     icon: 'car',                   emoji: '🚗', color: '#9ECAFF' },
+  { id: 'shopping',      label: 'Shopping',      icon: 'shopping',              emoji: '🛍️', color: '#D7AAFF' },
+  { id: 'bills',         label: 'Bills',         icon: 'lightning-bolt',        emoji: '⚡', color: '#FFD966' },
+  { id: 'entertainment', label: 'Entertainment', icon: 'movie-open',            emoji: '🎬', color: '#F28B82' },
+  { id: 'health',        label: 'Health',        icon: 'heart-pulse',           emoji: '💊', color: '#81C995' },
+  { id: 'groceries',     label: 'Groceries',     icon: 'cart',                  emoji: '🛒', color: '#FBBC04' },
+  { id: 'education',     label: 'Education',     icon: 'school',                emoji: '📚', color: '#78D9EC' },
+  { id: 'travel',        label: 'Travel',        icon: 'airplane',              emoji: '✈️', color: '#AECBFA' },
+  { id: 'transfer',      label: 'Transfer',      icon: 'send',                  emoji: '💸', color: '#80CBC4' },
+  { id: 'fitness',       label: 'Fitness',       icon: 'dumbbell',              emoji: '🏋️', color: '#F06292' },
+  { id: 'other',         label: 'Other',         icon: 'dots-horizontal-circle',emoji: '📦', color: '#CAC4D0' },
+];
+
+export const getCategoryById = (id: string) =>
+  Categories.find((c) => c.id === id) ?? Categories[Categories.length - 1];
+
+export const TripCategories = [
+  { id: 'food',          label: 'Food & Drink',  icon: 'food',                  emoji: '🍔', color: '#FFB4A2' },
+  { id: 'transport',     label: 'Transport',     icon: 'car',                   emoji: '🚗', color: '#9ECAFF' },
+  { id: 'hotel',         label: 'Hotel',         icon: 'bed',                   emoji: '🏨', color: '#CE93D8' },
+  { id: 'gas',           label: 'Gas',           icon: 'gas-station',           emoji: '⛽', color: '#FFCC80' },
+  { id: 'shopping',      label: 'Shopping',      icon: 'shopping',              emoji: '🛍️', color: '#D7AAFF' },
+  { id: 'entertainment', label: 'Entertainment', icon: 'movie-open',            emoji: '🎬', color: '#F28B82' },
+  { id: 'health',        label: 'Health',        icon: 'heart-pulse',           emoji: '💊', color: '#81C995' },
+  { id: 'travel',        label: 'Travel',        icon: 'airplane',              emoji: '✈️', color: '#AECBFA' },
+  { id: 'transfer',      label: 'Transfer',      icon: 'send',                  emoji: '💸', color: '#80CBC4' },
+  { id: 'fitness',       label: 'Fitness',       icon: 'dumbbell',              emoji: '🏋️', color: '#F06292' },
+  { id: 'other',         label: 'Other',         icon: 'dots-horizontal-circle',emoji: '📦', color: '#CAC4D0' },
+];
+
+export const getTripCategoryById = (id: string) =>
+  TripCategories.find((c) => c.id === id) ?? TripCategories[TripCategories.length - 1];
