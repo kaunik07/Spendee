@@ -2,9 +2,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet from '@gorhom/bottom-sheet';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Keyboard,
   Modal,
   Platform,
@@ -17,8 +16,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import CategoryOrTripPickerSheet from '@/components/CategoryOrTripPickerSheet';
-import { Categories, getCategoryById } from '@/constants/theme';
+import CategoryPickerSheet from '@/components/CategoryPickerSheet';
+import SubcategorySection from '@/components/SubcategorySection';
+import { LEARNED_DETAIL_KEYS } from '@/constants/subcategories';
+import { Colors, getCategoryById } from '@/constants/theme';
 import { useAccountsContext } from '@/store/AccountsContext';
 import { useAuthContext } from '@/store/AuthContext';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
@@ -33,7 +34,6 @@ import {
   deleteCCTransactionDirect,
   updateCCTransactionDirect,
 } from '@/store/useCreditCardTransactions';
-import { Colors } from '@/constants/theme';
 
 type PaymentType = 'bank_account' | 'credit_card' | null;
 
@@ -51,17 +51,6 @@ const C = {
   cardCoral: '#E8906A',
 };
 
-function detectCategoryFromName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  for (const cat of Categories) {
-    if (cat.id === 'other') continue;
-    if (lower.includes(cat.id.replace(/-/g, ' '))) return cat.id;
-    const labelWords = cat.label.toLowerCase().split(/[\s&]+/).filter((w) => w.length > 3);
-    if (labelWords.some((w) => lower.includes(w))) return cat.id;
-  }
-  return 'other';
-}
-
 export default function EditExpenseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -78,8 +67,8 @@ export default function EditExpenseScreen() {
   const [name,            setName]            = useState(expense?.name ?? '');
   const [note,            setNote]            = useState(expense?.note ?? '');
   const [category,        setCategory]        = useState(expense?.category ?? 'other');
-  const [tripId,          setTripId]          = useState<string | undefined>(expense?.tripId);
-  const [tripName,        setTripName]        = useState('');
+  const [subcategory,     setSubcategory]     = useState<string | null>(expense?.subcategory ?? null);
+  const [details,         setDetails]         = useState<Record<string, any>>(expense?.details ?? {});
   const [date,            setDate]            = useState(expense?.date ?? new Date().toISOString().split('T')[0]);
   const [showDatePicker,  setShowDatePicker]  = useState(false);
   const [paymentType,     setPaymentType]     = useState<PaymentType>(expense?.paymentType ?? null);
@@ -88,6 +77,37 @@ export default function EditExpenseScreen() {
   const dateObj = new Date(date + 'T00:00:00');
   const cat     = getCategoryById(category);
   const canSave = name.trim().length > 0 && parseFloat(amount) > 0;
+
+  // Store names the user has typed before (groceries autocomplete)
+  const knownStores = useMemo(() => {
+    const stores = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.category === 'groceries' && typeof e.details?.store === 'string' && e.details.store.trim()) {
+        stores.add(e.details.store.trim());
+      }
+    });
+    return [...stores];
+  }, [expenses]);
+
+  // Past values for suggest-text detail fields (e.g. restaurants)
+  const learned = useMemo(() => {
+    const map: Record<string, Map<string, string>> = {};
+    expenses.forEach((e) => {
+      LEARNED_DETAIL_KEYS.forEach((key) => {
+        const v = e.details?.[key];
+        if (typeof v === 'string' && v.trim()) {
+          (map[key] ??= new Map()).set(v.trim().toLowerCase(), v.trim());
+        }
+      });
+    });
+    return Object.fromEntries(Object.entries(map).map(([k, m]) => [k, [...m.values()]]));
+  }, [expenses]);
+
+  const handleCategorySelect = (catId: string) => {
+    setCategory(catId);
+    setSubcategory(null);
+    setDetails({});
+  };
 
   const handlePaymentTypeChange = (type: PaymentType) => {
     setPaymentType(type);
@@ -106,9 +126,7 @@ export default function EditExpenseScreen() {
     const newPaymentType   = paymentType;
     const newSourceId      = paymentSourceId;
 
-    const txnNote = tripId
-      ? `${tripName || 'Trip'} - ${name.trim()}`
-      : `${cat.label} - ${name.trim()}`;
+    const txnNote = `${cat.label} - ${name.trim()}`;
 
     let newLinkedTxnId: string | null = null;
 
@@ -174,13 +192,18 @@ export default function EditExpenseScreen() {
 
     if (newPaymentType === 'credit_card' || oldPaymentType === 'credit_card') bumpCCTxnVersion();
 
+    const cleanedDetails = Object.fromEntries(
+      Object.entries(details).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+    );
+
     await updateExpense(id, {
       name:               name.trim(),
       amount:             newAmount,
-      category:           tripId ? detectCategoryFromName(name) : category,
+      category,
+      subcategory,
+      details:            Object.keys(cleanedDetails).length > 0 ? cleanedDetails : null,
       note:               note.trim(),
       date,
-      tripId,
       paymentType:        newPaymentType,
       paymentSourceId:    newPaymentType ? newSourceId : null,
       linkedTransactionId: newLinkedTxnId,
@@ -244,20 +267,23 @@ export default function EditExpenseScreen() {
         <Pressable
           style={styles.categoryRow}
           onPress={() => { Keyboard.dismiss(); categorySheetRef.current?.expand(); }}>
-          {tripId ? (
-            <View style={[styles.catIconWrap, { backgroundColor: '#FFB74D22' }]}>
-              <MaterialCommunityIcons name="bag-suitcase-outline" size={20} color="#FFB74D" />
-            </View>
-          ) : (
-            <View style={[styles.catIconWrap, { backgroundColor: cat.color + '22' }]}>
-              <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
-            </View>
-          )}
-          <Text style={[styles.catLabel, { color: tripId ? '#FFB74D' : cat.color }]}>
-            {tripId ? tripName || 'Trip' : cat.label}
-          </Text>
+          <View style={[styles.catIconWrap, { backgroundColor: cat.color + '22' }]}>
+            <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
+          </View>
+          <Text style={[styles.catLabel, { color: cat.color }]}>{cat.label}</Text>
           <MaterialCommunityIcons name="chevron-right" size={18} color={C.outline} style={{ marginLeft: 'auto' }} />
         </Pressable>
+
+        {/* Subcategory + details */}
+        <SubcategorySection
+          category={category}
+          subcategory={subcategory}
+          details={details}
+          onChangeSubcategory={setSubcategory}
+          onChangeDetails={setDetails}
+          knownStores={knownStores}
+          learned={learned}
+        />
 
         {/* Note */}
         <Text style={styles.label}>Notes <Text style={styles.optional}>(optional)</Text></Text>
@@ -366,12 +392,10 @@ export default function EditExpenseScreen() {
 
       </ScrollView>
 
-      <CategoryOrTripPickerSheet
+      <CategoryPickerSheet
         sheetRef={categorySheetRef}
-        selectedCategory={category}
-        selectedTripId={tripId}
-        onSelectCategory={(id) => { setCategory(id); setTripId(undefined); setTripName(''); }}
-        onSelectTrip={(id, name) => { setTripId(id); setTripName(name); }}
+        selected={category}
+        onSelect={handleCategorySelect}
       />
     </SafeAreaView>
   );

@@ -208,7 +208,7 @@ export default function AccountDetailScreen() {
         <View style={styles.empty}>
           <MaterialCommunityIcons name="swap-vertical-circle-outline" size={52} color={Colors.outline} />
           <Text style={styles.emptyTitle}>No transactions yet</Text>
-          <Text style={styles.emptySubtitle}>Tap "Transaction" to record a deposit or withdrawal</Text>
+          <Text style={styles.emptySubtitle}>Tap &quot;Transaction&quot; to record a deposit or withdrawal</Text>
         </View>
       ) : (
         <FlatList

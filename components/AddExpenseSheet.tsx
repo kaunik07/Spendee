@@ -10,34 +10,22 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import CategoryPickerSheet from './CategoryPickerSheet';
-import { Categories, TripCategories, getCategoryById, getTripCategoryById } from '@/constants/theme';
+import SubcategorySection from './SubcategorySection';
+import { LEARNED_DETAIL_KEYS } from '@/constants/subcategories';
+import { getCategoryById } from '@/constants/theme';
 import { useAccountsContext } from '@/store/AccountsContext';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { useAuthContext } from '@/store/AuthContext';
-import { useTripsContext } from '@/store/TripsContext';
-import { getCurrencyByCode } from '@/constants/currencies';
 import { addAccountTransactionDirect } from '@/store/useAccountTransactions';
 import { addCCTransactionDirect } from '@/store/useCreditCardTransactions';
 import { useDefaultPayment } from '@/store/useDefaultPayment';
-
-function detectCategoryFromName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  for (const cat of Categories) {
-    if (cat.id === 'other') continue;
-    if (lower.includes(cat.id.replace(/-/g, ' '))) return cat.id;
-    const labelWords = cat.label.toLowerCase().split(/[\s&]+/).filter((w) => w.length > 3);
-    if (labelWords.some((w) => lower.includes(w))) return cat.id;
-  }
-  return 'other';
-}
 
 const C = {
   bg:        '#1C1B23',
@@ -52,7 +40,6 @@ const C = {
   danger:    '#F2B8B5',
   bankBlue:  '#82B1FF',
   cardCoral: '#E8906A',
-  tripAmber: '#FFB74D',
 };
 
 function todayStr() {
@@ -66,15 +53,12 @@ interface Props {
 }
 
 export default function AddExpenseSheet({ sheetRef }: Props) {
-  const { addExpense }                           = useExpenseContext();
+  const { addExpense, expenses }                 = useExpenseContext();
   const { user, storageMode }                    = useAuthContext();
   const { accounts, updateAccount }              = useAccountsContext();
   const { cards, updateCard, bumpCCTxnVersion }  = useCreditCardsContext();
   const { defaultPayment }                       = useDefaultPayment(user?.id ?? null);
-  const { trips, getTripById }                   = useTripsContext();
 
-  const selectedTrip   = tripId ? getTripById(tripId) : null;
-  const currencySymbol = getCurrencyByCode(selectedTrip?.currency ?? 'USD').symbol;
   const categorySheetRef            = useRef<BottomSheet>(null);
   const snapPoints                  = useMemo(() => ['92%'], []);
   const keyboardHeight              = useKeyboardHeight();
@@ -83,9 +67,8 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   const [name,            setName]            = useState('');
   const [note,            setNote]            = useState('');
   const [category,        setCategory]        = useState('food');
-  const [isTrip,          setIsTrip]          = useState(false);
-  const [tripId,          setTripId]          = useState<string | undefined>(undefined);
-  const [tripName,        setTripName]        = useState('');
+  const [subcategory,     setSubcategory]     = useState<string | null>(null);
+  const [details,         setDetails]         = useState<Record<string, any>>({});
   const [date,            setDate]            = useState(todayStr());
   const [showDatePicker,  setShowDatePicker]  = useState(false);
   const [paymentType,     setPaymentType]     = useState<PaymentType>(null);
@@ -100,7 +83,38 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   }, [sheetOpen, defaultPayment.type, defaultPayment.sourceId]);
 
   const dateObj = new Date(date + 'T00:00:00');
-  const cat     = isTrip ? getTripCategoryById(category) : getCategoryById(category);
+  const cat     = getCategoryById(category);
+
+  // Store names the user has typed before (groceries autocomplete)
+  const knownStores = useMemo(() => {
+    const stores = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.category === 'groceries' && typeof e.details?.store === 'string' && e.details.store.trim()) {
+        stores.add(e.details.store.trim());
+      }
+    });
+    return [...stores];
+  }, [expenses]);
+
+  // Past values for suggest-text detail fields (e.g. restaurants)
+  const learned = useMemo(() => {
+    const map: Record<string, Map<string, string>> = {};
+    expenses.forEach((e) => {
+      LEARNED_DETAIL_KEYS.forEach((key) => {
+        const v = e.details?.[key];
+        if (typeof v === 'string' && v.trim()) {
+          (map[key] ??= new Map()).set(v.trim().toLowerCase(), v.trim());
+        }
+      });
+    });
+    return Object.fromEntries(Object.entries(map).map(([k, m]) => [k, [...m.values()]]));
+  }, [expenses]);
+
+  const handleCategorySelect = (id: string) => {
+    setCategory(id);
+    setSubcategory(null);
+    setDetails({});
+  };
 
   const renderBackdrop = useCallback(
     (props: any) => (
@@ -121,9 +135,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
     const parsedAmount = parseFloat(amount);
     let linkedTransactionId: string | null = null;
 
-    const txnNote = tripId
-      ? `${tripName} - ${name.trim()}`
-      : `${cat.label} - ${name.trim()}`;
+    const txnNote = `${cat.label} - ${name.trim()}`;
 
     if (paymentType === 'bank_account' && paymentSourceId && user?.id) {
       const account = accounts.find((a) => a.id === paymentSourceId);
@@ -154,13 +166,19 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
       }
     }
 
+    // Strip empty detail values before saving
+    const cleanedDetails = Object.fromEntries(
+      Object.entries(details).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+    );
+
     await addExpense({
       name:                name.trim(),
       amount:              parsedAmount,
       category,
+      subcategory,
+      details:             Object.keys(cleanedDetails).length > 0 ? cleanedDetails : null,
       note:                note.trim(),
       date,
-      tripId,
       paymentType,
       paymentSourceId:     paymentType ? paymentSourceId : null,
       linkedTransactionId,
@@ -170,9 +188,8 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
     setName('');
     setNote('');
     setCategory('food');
-    setIsTrip(false);
-    setTripId(undefined);
-    setTripName('');
+    setSubcategory(null);
+    setDetails({});
     setDate(todayStr());
     setPaymentType(defaultPayment.type);
     setPaymentSourceId(defaultPayment.sourceId);
@@ -200,7 +217,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
 
           {/* Amount */}
           <View style={styles.amountRow}>
-            <Text style={styles.currencySymbol}>{currencySymbol}</Text>
+            <Text style={styles.currencySymbol}>$</Text>
             <TextInput
               style={styles.amountInput}
               placeholder="0.00"
@@ -213,7 +230,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
           </View>
 
           {/* Name */}
-          <Text style={styles.fieldLabel}>What's this for?</Text>
+          <Text style={styles.fieldLabel}>What&apos;s this for?</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. Lunch, Uber ride, Netflix..."
@@ -225,65 +242,28 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
             selectionColor={C.primary}
           />
 
-          {/* Category / Trip */}
+          {/* Category */}
           <Text style={styles.fieldLabel}>Category</Text>
+          <Pressable
+            style={styles.categoryRow}
+            onPress={() => { Keyboard.dismiss(); categorySheetRef.current?.expand(); }}>
+            <View style={[styles.catIconWrap, { backgroundColor: cat.color + '22' }]}>
+              <MaterialCommunityIcons name={cat.icon as any} size={22} color={cat.color} />
+            </View>
+            <Text style={[styles.catLabel, { color: cat.color }]}>{cat.label}</Text>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={C.outline} style={{ marginLeft: 'auto' }} />
+          </Pressable>
 
-          {/* For a trip? toggle */}
-          <View style={styles.tripToggleRow}>
-            <MaterialCommunityIcons name="bag-suitcase-outline" size={16} color={isTrip ? C.tripAmber : C.outline} />
-            <Text style={[styles.tripToggleLabel, isTrip && { color: C.tripAmber }]}>For a trip?</Text>
-            <Switch
-              value={isTrip}
-              onValueChange={(val) => {
-                setIsTrip(val);
-                setTripId(undefined);
-                setTripName('');
-                setCategory('food');
-              }}
-              trackColor={{ false: C.border, true: C.tripAmber + '60' }}
-              thumbColor={isTrip ? C.tripAmber : C.outline}
-              style={{ marginLeft: 'auto' }}
-            />
-          </View>
-
-          {/* Trip chips (shown when isTrip = true) */}
-          {isTrip && trips.length > 0 && (
-            <>
-              <Text style={styles.tripSubLabel}>Select Trip</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tripChipsRow} keyboardShouldPersistTaps="handled">
-                {trips.map((trip) => {
-                  const sel = tripId === trip.id;
-                  return (
-                    <TouchableOpacity
-                      key={trip.id}
-                      style={[styles.tripChip, sel && styles.tripChipSelected]}
-                      onPress={() => { setTripId(sel ? undefined : trip.id); setTripName(sel ? '' : trip.name); }}
-                      activeOpacity={0.75}>
-                      <MaterialCommunityIcons name="bag-suitcase-outline" size={14} color={sel ? C.tripAmber : C.outline} />
-                      <Text style={[styles.tripChipText, sel && { color: C.tripAmber }]}>{trip.name}</Text>
-                      {sel && <MaterialCommunityIcons name="check-circle" size={13} color={C.tripAmber} />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </>
-          )}
-
-          {/* Category picker row */}
-          {(!isTrip || trips.length > 0) && (
-            <>
-              {isTrip && <Text style={styles.tripSubLabel}>Expense Type</Text>}
-              <Pressable
-                style={styles.categoryRow}
-                onPress={() => { Keyboard.dismiss(); categorySheetRef.current?.expand(); }}>
-                <View style={[styles.catIconWrap, { backgroundColor: cat.color + '22' }]}>
-                  <MaterialCommunityIcons name={cat.icon as any} size={22} color={cat.color} />
-                </View>
-                <Text style={[styles.catLabel, { color: cat.color }]}>{cat.label}</Text>
-                <MaterialCommunityIcons name="chevron-right" size={20} color={C.outline} style={{ marginLeft: 'auto' }} />
-              </Pressable>
-            </>
-          )}
+          {/* Subcategory + details */}
+          <SubcategorySection
+            category={category}
+            subcategory={subcategory}
+            details={details}
+            onChangeSubcategory={setSubcategory}
+            onChangeDetails={setDetails}
+            knownStores={knownStores}
+            learned={learned}
+          />
 
           {/* Paid with */}
           <Text style={styles.fieldLabel}>
@@ -435,8 +415,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
       <CategoryPickerSheet
         sheetRef={categorySheetRef}
         selected={category}
-        onSelect={setCategory}
-        categories={isTrip ? TripCategories : Categories}
+        onSelect={handleCategorySelect}
       />
     </>
   );
@@ -500,43 +479,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
-
-  tripToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: C.surface,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 12,
-  },
-  tripToggleLabel: { color: C.outline, fontSize: 14, fontWeight: '600' },
-  tripSubLabel: {
-    color: C.outline,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-    marginTop: 2,
-  },
-  tripChipsRow: { gap: 8, paddingBottom: 12, paddingRight: 4 },
-  tripChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: C.surface,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  tripChipSelected: { borderColor: '#FFB74D80', backgroundColor: '#FFB74D12' },
-  tripChipText: { color: C.textSec, fontSize: 13, fontWeight: '600' },
 
   categoryRow: {
     flexDirection: 'row',

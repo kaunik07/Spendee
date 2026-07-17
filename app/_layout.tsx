@@ -10,10 +10,9 @@ import { Colors } from '@/constants/theme';
 import { AccountsProvider } from '@/store/AccountsContext';
 import { CreditCardsProvider } from '@/store/CreditCardsContext';
 import { AuthProvider, useAuthContext } from '@/store/AuthContext';
+import { BudgetsProvider } from '@/store/BudgetsContext';
 import { ExpenseProvider } from '@/store/ExpenseContext';
-import { InvestmentsProvider } from '@/store/InvestmentsContext';
 import { SavingsProvider } from '@/store/SavingsContext';
-import { TripsProvider } from '@/store/TripsContext';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -115,12 +114,10 @@ export default function RootLayout() {
           <SavingsProvider>
             <AccountsProvider>
             <CreditCardsProvider>
-            <InvestmentsProvider>
-            <TripsProvider>
+            <BudgetsProvider>
               <AuthGuard>
                 <Stack>
                   <Stack.Screen name="(tabs)"    options={{ headerShown: false }} />
-                  <Stack.Screen name="trip/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="login"     options={{ headerShown: false, animation: 'fade' }} />
                   <Stack.Screen name="signup"    options={{ headerShown: false, animation: 'slide_from_right' }} />
                   <Stack.Screen name="profile"      options={{ headerShown: false, animation: 'slide_from_right' }} />
@@ -134,8 +131,7 @@ export default function RootLayout() {
                 </Stack>
                 <StatusBar style="light" />
               </AuthGuard>
-            </TripsProvider>
-            </InvestmentsProvider>
+            </BudgetsProvider>
             </CreditCardsProvider>
             </AccountsProvider>
           </SavingsProvider>

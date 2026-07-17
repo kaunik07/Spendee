@@ -1,205 +1,245 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import BottomSheet from '@gorhom/bottom-sheet';
 import { useRouter } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  FlatList,
-  Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AddExpenseSheet from '@/components/AddExpenseSheet';
 import { Colors, getCategoryById } from '@/constants/theme';
+import { useAccountsContext } from '@/store/AccountsContext';
 import { useAuthContext } from '@/store/AuthContext';
+import { useBudgetsContext } from '@/store/BudgetsContext';
+import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
-import { useExpenseActions } from '@/store/useExpenseActions';
-import { useTripsContext } from '@/store/TripsContext';
-import { Expense } from '@/store/useExpenses';
+
+const BANK_BLUE    = '#82B1FF';
+const CARD_COLOR   = '#E8906A';
+const INVEST_COLOR = '#B39DDB';
+const WARN_COLOR   = '#FFB74D';
+
+function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 export default function HomeScreen() {
-  const sheetRef = useRef<BottomSheet>(null);
   const router = useRouter();
-  const { user } = useAuthContext();
+  const { user }                    = useAuthContext();
+  const { netWorth }                = useAccountsContext();
+  const { totalOutstanding }        = useCreditCardsContext();
   const { expenses, refresh: refreshExpenses } = useExpenseContext();
-  const { deleteExpenseWithReversal }          = useExpenseActions();
-  const { trips, refresh: refreshTrips }       = useTripsContext();
+  const { budgets, refresh: refreshBudgets }   = useBudgetsContext();
 
   const [refreshing, setRefreshing] = useState(false);
-  const handleRefresh = async () => {
+  const handleRefresh = () => {
     setRefreshing(true);
     refreshExpenses();
-    refreshTrips();
+    refreshBudgets();
     setTimeout(() => setRefreshing(false), 800);
   };
 
-  const now           = new Date();
-  const monthName     = now.toLocaleString('default', { month: 'long', year: 'numeric' });
-  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  // ── Card data ────────────────────────────────────────────
+  const now      = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const today    = todayStr();
 
-  const toUSD = (e: Expense) => {
-    const trip = e.tripId ? trips.find((t) => t.id === e.tripId) : null;
-    const rate = trip?.conversionRate ?? 1;
-    return e.amount / rate;
-  };
+  const trueNetWorth = netWorth - totalOutstanding;
 
-  const monthTotal = expenses
-    .filter((e) => {
-      const d = new Date(e.date);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    })
-    .reduce((s, e) => s + toUSD(e), 0);
+  const totalInvested = useMemo(
+    () => expenses.filter((e) => e.category === 'investment').reduce((s, e) => s + e.amount, 0),
+    [expenses]
+  );
 
-  const prevMonthTotal = expenses
-    .filter((e) => {
-      const d = new Date(e.date);
-      return d.getMonth() === prevMonthDate.getMonth() && d.getFullYear() === prevMonthDate.getFullYear();
-    })
-    .reduce((s, e) => s + toUSD(e), 0);
+  const todayExpenses = useMemo(() => expenses.filter((e) => e.date === today), [expenses, today]);
+  const todayTotal    = todayExpenses.reduce((s, e) => s + e.amount, 0);
 
-  const delta = monthTotal - prevMonthTotal;
+  // Most spent category this month
+  const topCategory = useMemo(() => {
+    const map: Record<string, number> = {};
+    expenses.forEach((e) => {
+      if (e.date.startsWith(monthKey)) map[e.category] = (map[e.category] ?? 0) + e.amount;
+    });
+    const entries = Object.entries(map).sort(([, a], [, b]) => b - a);
+    if (entries.length === 0) return null;
+    return { cat: getCategoryById(entries[0][0]), amount: entries[0][1] };
+  }, [expenses, monthKey]);
+
+  // Pinned budgets with spend
+  const pinnedBudgets = useMemo(() => {
+    const spent: Record<string, number> = {};
+    expenses.forEach((e) => {
+      if (e.date.startsWith(monthKey)) spent[e.category] = (spent[e.category] ?? 0) + e.amount;
+    });
+    return budgets
+      .filter((b) => b.pinned)
+      .map((b) => ({ budget: b, spent: spent[b.category] ?? 0 }))
+      .sort((a, b) => (b.spent / b.budget.monthlyLimit) - (a.spent / a.budget.monthlyLimit));
+  }, [budgets, expenses, monthKey]);
 
   return (
     <SafeAreaView style={styles.safe}>
-      <FlatList
-        data={expenses}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />}
-        ListHeaderComponent={
-          <>
-            {/* Header */}
-            <View style={styles.header}>
-              <View>
-                <Text style={styles.appName}>Spendee</Text>
-                <Text style={styles.headerSub}>Your spending overview</Text>
-              </View>
-              <TouchableOpacity style={styles.avatarBadge} onPress={() => router.push('/profile')} activeOpacity={0.8}>
-                <Text style={styles.avatarInitials}>
-                  {user?.username.slice(0, 2).toUpperCase() ?? '??'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />}>
 
-            {/* Monthly Summary Card */}
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryTop}>
-                <View>
-                  <Text style={styles.summaryLabel}>{monthName}</Text>
-                  <Text style={styles.summaryAmount}>${monthTotal.toFixed(2)}</Text>
-                  <Text style={styles.summaryCaption}>Total spent this month</Text>
-                  {prevMonthTotal > 0 && (
-                    <View style={[
-                      styles.deltaChip,
-                      { backgroundColor: delta > 0 ? Colors.danger + '22' : Colors.primary + '22' },
-                    ]}>
-                      <MaterialCommunityIcons
-                        name={delta > 0 ? 'arrow-up' : 'arrow-down'}
-                        size={10}
-                        color={delta > 0 ? Colors.danger : Colors.primary}
-                      />
-                      <Text style={[styles.deltaText, { color: delta > 0 ? Colors.danger : Colors.primary }]}>
-                        ${Math.abs(delta).toFixed(2)} vs last month
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <View style={styles.summaryIcon}>
-                  <MaterialCommunityIcons name="trending-up" size={32} color={Colors.primary} />
-                </View>
-              </View>
-            </View>
-
-            {/* Section Header */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Transactions</Text>
-              <Text style={styles.sectionCount}>{expenses.length}</Text>
-            </View>
-
-            {expenses.length === 0 && (
-              <View style={styles.emptyState}>
-                <MaterialCommunityIcons name="receipt-text-outline" size={56} color={Colors.outline} />
-                <Text style={styles.emptyText}>No expenses yet</Text>
-                <Text style={styles.emptySubText}>Tap + to record your first expense</Text>
-              </View>
-            )}
-          </>
-        }
-        renderItem={({ item }) => (
-          <ExpenseRow item={item} onDelete={() => deleteExpenseWithReversal(item)} />
-        )}
-      />
-
-      {/* FAB */}
-      <TouchableOpacity style={styles.fab} onPress={() => sheetRef.current?.expand()} activeOpacity={0.85}>
-        <MaterialCommunityIcons name="plus" size={28} color={Colors.onPrimary} />
-      </TouchableOpacity>
-
-      <AddExpenseSheet sheetRef={sheetRef} />
-    </SafeAreaView>
-  );
-}
-
-
-function ExpenseRow({ item, onDelete }: { item: Expense; onDelete: () => void }) {
-  const { getTripById } = useTripsContext();
-  const router = useRouter();
-  const cat = getCategoryById(item.category);
-
-  const trip = item.tripId ? getTripById(item.tripId) : null;
-  const displayIcon   = trip ? 'bag-suitcase' : cat.icon;
-  const displayColor  = trip ? Colors.trip : cat.color;
-  const displayLabel  = trip ? trip.name : cat.label;
-  const displayAmount = trip
-    ? item.amount / trip.conversionRate
-    : item.amount;
-
-  const displayDate = new Date(item.date + 'T00:00:00').toLocaleDateString('default', {
-    month: 'short', day: 'numeric',
-  });
-
-  return (
-    <TouchableOpacity style={styles.expenseCard} onPress={() => router.push(`/edit-expense/${item.id}`)} activeOpacity={0.75}>
-      <View style={[styles.expenseIconWrap, { backgroundColor: displayColor + '20' }]}>
-        <MaterialCommunityIcons name={displayIcon as any} size={22} color={displayColor} />
-      </View>
-
-      <View style={styles.expenseBody}>
-        <Text style={styles.expenseName} numberOfLines={1}>{item.name}</Text>
-        <View style={styles.expenseMeta}>
-          <Text style={[styles.expenseCatChip, { color: displayColor }]}>{displayLabel}</Text>
-          {item.note ? <Text style={styles.expenseNote} numberOfLines={1}>· {item.note}</Text> : null}
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.appName}>Spendee</Text>
+            <Text style={styles.headerSub}>Welcome back, {user?.username ?? 'there'}</Text>
+          </View>
+          <TouchableOpacity style={styles.avatarBadge} onPress={() => router.push('/profile')} activeOpacity={0.8}>
+            <Text style={styles.avatarInitials}>
+              {user?.username.slice(0, 2).toUpperCase() ?? '??'}
+            </Text>
+          </TouchableOpacity>
         </View>
-        <Text style={styles.expenseDate}>{displayDate}</Text>
-      </View>
 
-      <View style={styles.expenseRight}>
-        <Text style={styles.expenseAmount}>-${displayAmount.toFixed(2)}</Text>
-        <Pressable onPress={onDelete} hitSlop={10} style={styles.deleteBtn}>
-          <MaterialCommunityIcons name="trash-can-outline" size={16} color={Colors.outline} />
-        </Pressable>
-      </View>
-    </TouchableOpacity>
+        {/* ── Net Worth (hero card) ── */}
+        <TouchableOpacity style={styles.heroCard} onPress={() => router.push('/profile')} activeOpacity={0.85}>
+          <View style={styles.heroTop}>
+            <View>
+              <Text style={styles.heroLabel}>Net Worth</Text>
+              <Text style={[styles.heroAmount, { color: trueNetWorth >= 0 ? Colors.primary : Colors.danger }]}>
+                {trueNetWorth < 0 ? '−' : ''}${Math.abs(trueNetWorth).toFixed(2)}
+              </Text>
+            </View>
+            <View style={styles.heroIcon}>
+              <MaterialCommunityIcons name="wallet-outline" size={26} color={Colors.primary} />
+            </View>
+          </View>
+          <View style={styles.heroBreakdown}>
+            <View style={styles.heroChip}>
+              <View style={[styles.chipDot, { backgroundColor: BANK_BLUE }]} />
+              <Text style={styles.heroChipText}>Bank  <Text style={{ color: BANK_BLUE }}>+${netWorth.toFixed(2)}</Text></Text>
+            </View>
+            <View style={styles.heroChip}>
+              <View style={[styles.chipDot, { backgroundColor: CARD_COLOR }]} />
+              <Text style={styles.heroChipText}>Cards  <Text style={{ color: CARD_COLOR }}>−${totalOutstanding.toFixed(2)}</Text></Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* ── Investment + Today (side by side) ── */}
+        <View style={styles.gridRow}>
+          <View style={[styles.gridCard, { borderColor: INVEST_COLOR + '40' }]}>
+            <View style={[styles.gridIcon, { backgroundColor: INVEST_COLOR + '20' }]}>
+              <MaterialCommunityIcons name="chart-line-variant" size={19} color={INVEST_COLOR} />
+            </View>
+            <Text style={styles.gridLabel}>Invested</Text>
+            <Text style={[styles.gridAmount, { color: INVEST_COLOR }]}>${totalInvested.toFixed(2)}</Text>
+            <Text style={styles.gridSub}>all time</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.gridCard}
+            onPress={() => router.push('/expenses')}
+            activeOpacity={0.8}>
+            <View style={[styles.gridIcon, { backgroundColor: Colors.danger + '20' }]}>
+              <MaterialCommunityIcons name="calendar-today" size={19} color={Colors.danger} />
+            </View>
+            <Text style={styles.gridLabel}>Today</Text>
+            <Text style={[styles.gridAmount, { color: Colors.danger }]}>-${todayTotal.toFixed(2)}</Text>
+            <Text style={styles.gridSub}>
+              {todayExpenses.length} expense{todayExpenses.length !== 1 ? 's' : ''}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Most spent category (this month) ── */}
+        <TouchableOpacity style={styles.wideCard} onPress={() => router.push('/summary')} activeOpacity={0.8}>
+          {topCategory ? (
+            <>
+              <View style={[styles.gridIcon, { backgroundColor: topCategory.cat.color + '20' }]}>
+                <MaterialCommunityIcons name={topCategory.cat.icon as any} size={20} color={topCategory.cat.color} />
+              </View>
+              <View style={styles.wideBody}>
+                <Text style={styles.gridLabel}>Most spent this month</Text>
+                <Text style={[styles.wideCategory, { color: topCategory.cat.color }]}>{topCategory.cat.label}</Text>
+              </View>
+              <Text style={[styles.wideAmount, { color: topCategory.cat.color }]}>
+                ${topCategory.amount.toFixed(2)}
+              </Text>
+            </>
+          ) : (
+            <>
+              <View style={[styles.gridIcon, { backgroundColor: Colors.surfaceContainer }]}>
+                <MaterialCommunityIcons name="chart-donut" size={20} color={Colors.outline} />
+              </View>
+              <View style={styles.wideBody}>
+                <Text style={styles.gridLabel}>Most spent this month</Text>
+                <Text style={styles.wideEmpty}>No expenses yet this month</Text>
+              </View>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* ── Pinned budgets ── */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Budget Remaining</Text>
+          <TouchableOpacity onPress={() => router.push('/budget')} hitSlop={8}>
+            <Text style={styles.sectionLink}>Manage</Text>
+          </TouchableOpacity>
+        </View>
+
+        {pinnedBudgets.length === 0 ? (
+          <TouchableOpacity style={styles.pinHintCard} onPress={() => router.push('/budget')} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="pin-outline" size={20} color={Colors.outline} />
+            <Text style={styles.pinHintText}>
+              Pin budgets from the Budget tab to track them here
+            </Text>
+            <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.outline} />
+          </TouchableOpacity>
+        ) : (
+          pinnedBudgets.map(({ budget, spent }) => {
+            const cat = getCategoryById(budget.category);
+            const pct = (spent / budget.monthlyLimit) * 100;
+            const remaining = budget.monthlyLimit - spent;
+            const barColor = pct >= 100 ? Colors.danger : pct >= 80 ? WARN_COLOR : cat.color;
+            return (
+              <TouchableOpacity
+                key={budget.id}
+                style={styles.budgetCard}
+                onPress={() => router.push('/budget')}
+                activeOpacity={0.8}>
+                <View style={styles.budgetTop}>
+                  <View style={[styles.budgetIcon, { backgroundColor: cat.color + '20' }]}>
+                    <MaterialCommunityIcons name={cat.icon as any} size={17} color={cat.color} />
+                  </View>
+                  <Text style={styles.budgetLabel}>{cat.label}</Text>
+                  <Text style={[styles.budgetRemaining, { color: remaining >= 0 ? Colors.primary : Colors.danger }]}>
+                    {remaining >= 0
+                      ? `$${remaining.toFixed(2)} left`
+                      : `$${Math.abs(remaining).toFixed(2)} over`}
+                  </Text>
+                </View>
+                <View style={styles.budgetTrack}>
+                  <View style={[styles.budgetFill, { width: `${Math.min(100, pct)}%` as any, backgroundColor: barColor }]} />
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-
-  listContent: { paddingHorizontal: 18, paddingBottom: 100 },
+  content: { paddingHorizontal: 18, paddingBottom: 40 },
 
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingTop: 16,
-    paddingBottom: 14,
+    paddingBottom: 16,
   },
-  appName: { color: Colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
+  appName:   { color: Colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
   headerSub: { color: Colors.textSecondary, fontSize: 13, marginTop: 2 },
   avatarBadge: {
     width: 44,
@@ -213,102 +253,127 @@ const styles = StyleSheet.create({
   },
   avatarInitials: { color: Colors.primary, fontSize: 14, fontWeight: '800' },
 
-  summaryCard: {
+  // Hero card
+  heroCard: {
     backgroundColor: Colors.surface,
-    borderRadius: 24,
-    padding: 22,
-    marginBottom: 24,
+    borderRadius: 22,
+    padding: 20,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.primary + '30',
+    gap: 16,
   },
-  summaryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  summaryLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 4 },
-  summaryAmount: { color: Colors.primary, fontSize: 44, fontWeight: '800', letterSpacing: -1 },
-  summaryCaption: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-  deltaChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 3,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    marginTop: 6,
-  },
-  deltaText: { fontSize: 11, fontWeight: '700' },
-  summaryIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+  heroTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  heroLabel:  { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  heroAmount: { fontSize: 34, fontWeight: '800', letterSpacing: -1 },
+  heroIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
     backgroundColor: Colors.primaryMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-
-  sectionHeader: {
+  heroBreakdown: { flexDirection: 'row', gap: 10 },
+  heroChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
+    backgroundColor: Colors.surfaceContainer,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  chipDot:      { width: 7, height: 7, borderRadius: 4 },
+  heroChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600' },
+
+  // 2-column grid
+  gridRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  gridCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 4,
+  },
+  gridIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  gridLabel:  { color: Colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  gridAmount: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
+  gridSub:    { color: Colors.textMuted, fontSize: 11 },
+
+  // Wide card (most spent)
+  wideCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  wideBody:     { flex: 1, gap: 3 },
+  wideCategory: { fontSize: 17, fontWeight: '800' },
+  wideAmount:   { fontSize: 18, fontWeight: '800' },
+  wideEmpty:    { color: Colors.textMuted, fontSize: 14 },
+
+  // Pinned budgets
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
   },
   sectionTitle: { color: Colors.text, fontSize: 17, fontWeight: '700' },
-  sectionCount: {
-    backgroundColor: Colors.surfaceContainer,
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
+  sectionLink:  { color: Colors.primary, fontSize: 13, fontWeight: '600' },
 
-  emptyState: { alignItems: 'center', paddingTop: 48, gap: 10 },
-  emptyText: { color: Colors.text, fontSize: 18, fontWeight: '700' },
-  emptySubText: { color: Colors.textSecondary, fontSize: 14 },
-
-  expenseCard: {
+  pinHintCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
     backgroundColor: Colors.surface,
-    borderRadius: 18,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  pinHintText: { color: Colors.textSecondary, fontSize: 13, flex: 1 },
+
+  budgetCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 12,
+    gap: 10,
   },
-  expenseIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
+  budgetTop:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  budgetIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  expenseBody: { flex: 1, gap: 3 },
-  expenseName: { color: Colors.text, fontSize: 15, fontWeight: '700' },
-  expenseMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  expenseCatChip: { fontSize: 12, fontWeight: '600' },
-  expenseNote: { color: Colors.textSecondary, fontSize: 12, flex: 1 },
-  expenseDate: { color: Colors.textMuted, fontSize: 11 },
-  expenseRight: { alignItems: 'flex-end', gap: 8 },
-  expenseAmount: { color: Colors.danger, fontSize: 15, fontWeight: '700' },
-  deleteBtn: { padding: 2 },
-
-  fab: {
-    position: 'absolute',
-    bottom: 82,
-    right: 22,
-    width: 58,
-    height: 58,
-    borderRadius: 18,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+  budgetLabel:     { color: Colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  budgetRemaining: { fontSize: 13, fontWeight: '700' },
+  budgetTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: Colors.surfaceContainer,
+    overflow: 'hidden',
   },
+  budgetFill: { height: '100%', borderRadius: 3 },
 });

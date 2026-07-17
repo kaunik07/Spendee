@@ -58,7 +58,6 @@ export default function DeleteAccountScreen() {
             'All your expenses and transactions will be erased',
             'Your accounts and balances will be removed',
             'Your savings goals will be deleted',
-            'Your trips and trip expenses will be lost',
             'You will not be able to recover any of this data',
           ].map((item, i) => (
             <View key={i} style={[styles.disclaimerRow, i > 0 && styles.disclaimerRowBorder]}>

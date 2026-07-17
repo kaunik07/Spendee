@@ -40,6 +40,12 @@ yarn-error.*
 app-example
 *.save
 
+# Editor
+.vscode/
+
 # generated native folders
 /ios
 /android
+
+# Supabase CLI
+supabase/.temp/

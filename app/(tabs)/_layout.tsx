@@ -1,8 +1,37 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/theme';
 
+// Material-3 style icon: the active tab's icon sits inside a soft mint pill
+function PillIcon({
+  focused, color, size, active, inactive,
+}: {
+  focused: boolean;
+  color: string;
+  size: number;
+  active: string;
+  inactive: string;
+}) {
+  return (
+    <View
+      style={{
+        width: 60,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: focused ? Colors.primaryMuted : 'transparent',
+      }}>
+      <MaterialCommunityIcons name={(focused ? active : inactive) as any} size={size + 2} color={color} />
+    </View>
+  );
+}
+
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
@@ -11,37 +40,38 @@ export default function TabLayout() {
           backgroundColor: Colors.tabBar,
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: 64,
-          paddingBottom: 10,
-          paddingTop: 6,
+          height: 62 + insets.bottom,
+          paddingTop: 8,
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 10,
         },
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.outline,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4 },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4, marginTop: 2 },
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? 'home-variant' : 'home-variant-outline'}
-              size={size + 2}
-              color={color}
-            />
+          tabBarIcon: (props) => (
+            <PillIcon {...props} active="home-variant" inactive="home-variant-outline" />
           ),
         }}
       />
       <Tabs.Screen
-        name="trips"
+        name="expenses"
         options={{
-          title: 'Trips',
-          tabBarIcon: ({ color, size, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? 'compass' : 'compass-outline'}
-              size={size + 2}
-              color={color}
-            />
+          title: 'Expense',
+          tabBarIcon: (props) => (
+            <PillIcon {...props} active="receipt-text" inactive="receipt-text-outline" />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="budget"
+        options={{
+          title: 'Budget',
+          tabBarIcon: (props) => (
+            <PillIcon {...props} active="target" inactive="target" />
           ),
         }}
       />
@@ -49,12 +79,8 @@ export default function TabLayout() {
         name="savings"
         options={{
           title: 'Savings',
-          tabBarIcon: ({ color, size, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? 'piggy-bank' : 'piggy-bank-outline'}
-              size={size + 2}
-              color={color}
-            />
+          tabBarIcon: (props) => (
+            <PillIcon {...props} active="piggy-bank" inactive="piggy-bank-outline" />
           ),
         }}
       />
@@ -62,25 +88,8 @@ export default function TabLayout() {
         name="summary"
         options={{
           title: 'Summary',
-          tabBarIcon: ({ color, size, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? 'chart-box' : 'chart-box-outline'}
-              size={size + 2}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="investments"
-        options={{
-          title: 'Invest',
-          tabBarIcon: ({ color, size, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? 'chart-line-variant' : 'chart-line-variant'}
-              size={size + 2}
-              color={color}
-            />
+          tabBarIcon: (props) => (
+            <PillIcon {...props} active="chart-box" inactive="chart-box-outline" />
           ),
         }}
       />

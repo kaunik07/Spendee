@@ -81,6 +81,20 @@ export function useAuth() {
 
   // ── Init ────────────────────────────────────────────────
   useEffect(() => {
+    // settled ensures setIsLoading(false) is called exactly once,
+    // whether via INITIAL_SESSION, local-mode init, or the safety timeout.
+    let settled = false;
+    const settle = () => {
+      if (!settled) {
+        settled = true;
+        setIsLoading(false);
+      }
+    };
+
+    // Safety net: if INITIAL_SESSION never fires (bad env vars, network error,
+    // Supabase client init failure), unblock the UI after 6 seconds.
+    const safetyTimer = setTimeout(settle, 6000);
+
     // Handle local mode separately (no Supabase auth involved)
     (async () => {
       const mode = await getStorageMode();
@@ -102,9 +116,9 @@ export function useAuth() {
           const raw = await SecureStore.getItemAsync(LAST_USER_KEY);
           if (raw) setLastUser(JSON.parse(raw));
         }
-        setIsLoading(false);
+        settle();
       }
-      // Online mode: isLoading is set to false inside onAuthStateChange via INITIAL_SESSION
+      // Online mode: settled via INITIAL_SESSION below (or safety timeout)
     })();
 
     // For online mode, use onAuthStateChange as the single source of truth.
@@ -115,8 +129,14 @@ export function useAuth() {
         if (event === 'INITIAL_SESSION') {
           try {
             const mode = await getStorageMode();
-            if (mode === 'local') return; // local mode handled above
+            if (mode === 'local') return; // local mode already settled above
             if (session) {
+              // If mode was wiped (cache clear/reinstall) but a Supabase session
+              // still exists, this must be an online user — restore the mode.
+              if (!mode) {
+                await setStorageMode('online');
+                setMode('online');
+              }
               const profile = await fetchProfile(session.user.id);
               if (profile) {
                 setUser(profile);
@@ -130,7 +150,7 @@ export function useAuth() {
           } catch (_) {
             // init failed — still unblock the UI
           } finally {
-            setIsLoading(false);
+            settle();
           }
         } else if (event === 'SIGNED_OUT') {
           setUser(null);
@@ -141,7 +161,10 @@ export function useAuth() {
         }
       }
     );
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   // ── Sign up ─────────────────────────────────────────────
@@ -153,6 +176,11 @@ export function useAuth() {
     const trimmed = username.trim();
     if (!trimmed || !password) return { error: 'All fields are required' };
     if (trimmed.length < 3)    return { error: 'Username must be at least 3 characters' };
+    // Username becomes the local part of a synthetic email (user@spendee.app),
+    // so it must be email-safe.
+    if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
+      return { error: 'Username can only contain letters, numbers, dots, dashes and underscores' };
+    }
     if (password.length < 4)   return { error: 'Password must be at least 4 characters' };
 
     await setStorageMode(mode);
@@ -185,7 +213,8 @@ export function useAuth() {
         return { error: error.message };
       }
       if (!data.user) return { error: 'Sign up failed, please try again' };
-      const newUser: User = { id: data.user.id, username: trimmed, biometricEnabled: false, createdAt: data.user.created_at };
+      // The DB trigger stores the lowercased email local part — mirror that here
+      const newUser: User = { id: data.user.id, username: trimmed.toLowerCase(), biometricEnabled: false, createdAt: data.user.created_at };
       setUser(newUser);
       setLastUser(newUser);
       await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(newUser));
@@ -220,6 +249,8 @@ export function useAuth() {
       if (error || !data.user) return { error: 'Invalid username or password' };
       const profile = await fetchProfile(data.user.id);
       if (!profile) return { error: 'Profile not found' };
+      await setStorageMode('online');
+      setMode('online');
       setUser(profile);
       setLastUser(profile);
       await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
@@ -274,7 +305,7 @@ export function useAuth() {
       const { data, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
       if (error || !data.session) {
         await SecureStore.deleteItemAsync(BIO_ACCESS_KEY);
-      await SecureStore.deleteItemAsync(BIO_REFRESH_KEY);
+        await SecureStore.deleteItemAsync(BIO_REFRESH_KEY);
         return { error: 'Session expired — please log in with your password' };
       }
       const profile = await fetchProfile(data.session.user.id);
@@ -329,6 +360,8 @@ export function useAuth() {
         AsyncStorage.removeItem(`@spendee_account_txns_${userId}`),
         AsyncStorage.removeItem(`@spendee_credit_cards_${userId}`),
         AsyncStorage.removeItem(`@spendee_cc_txns_${userId}`),
+        AsyncStorage.removeItem(`@spendee_budgets_${userId}`),
+        AsyncStorage.removeItem(`@spendee_default_payment_${userId}`),
         AsyncStorage.removeItem(LOCAL_SESSION_KEY),
       ]);
       // Remove user from users list
@@ -373,8 +406,12 @@ export function useAuth() {
       if (!result.success) return { error: 'Cancelled' };
     } else {
       const mode = await getStorageMode();
-      if (mode === 'local') await SecureStore.deleteItemAsync(LOCAL_BIO_USER_KEY);
-      else await SecureStore.deleteItemAsync(BIO_SESSION_KEY);
+      if (mode === 'local') {
+        await SecureStore.deleteItemAsync(LOCAL_BIO_USER_KEY);
+      } else {
+        await SecureStore.deleteItemAsync(BIO_ACCESS_KEY);
+        await SecureStore.deleteItemAsync(BIO_REFRESH_KEY);
+      }
     }
 
     const newValue = !user.biometricEnabled;

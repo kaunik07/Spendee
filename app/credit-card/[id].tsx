@@ -280,7 +280,7 @@ export default function CreditCardDetailScreen() {
           <MaterialCommunityIcons name="credit-card-clock-outline" size={52} color={Colors.outline} />
           <Text style={styles.emptyTitle}>No transactions yet</Text>
           <Text style={styles.emptySubtitle}>
-            Tap "Transaction" to record a charge or payment
+            Tap &quot;Transaction&quot; to record a charge or payment
           </Text>
         </View>
       ) : (

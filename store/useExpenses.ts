@@ -11,7 +11,8 @@ export interface Expense {
   note: string;
   date: string;
   createdAt: number;
-  tripId?: string;
+  subcategory?: string | null;              // subcategory id from constants/subcategories
+  details?: Record<string, any> | null;     // extra per-subcategory info (kept for later stages)
   // Optional link to the payment source used for this expense
   paymentType: 'bank_account' | 'credit_card' | null;
   paymentSourceId: string | null;       // account id or card id
@@ -27,7 +28,8 @@ function rowToExpense(row: any): Expense {
     note:                row.note ?? '',
     date:                row.date,
     createdAt:           row.created_at,
-    tripId:              row.trip_id ?? undefined,
+    subcategory:         row.subcategory ?? null,
+    details:             row.details ?? null,
     paymentType:         row.payment_type ?? null,
     paymentSourceId:     row.payment_source_id ?? null,
     linkedTransactionId: row.linked_transaction_id ?? null,
@@ -66,7 +68,8 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
       });
     } else {
       supabase.from('expenses').select('*').order('created_at', { ascending: false })
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (error) console.warn('[useExpenses] fetch error:', error.message);
           setExpenses((data ?? []).map(rowToExpense));
           setLoading(false);
         });
@@ -81,7 +84,7 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         await AsyncStorage.setItem(localKey, JSON.stringify(updated));
         setExpenses(updated);
       } else {
-        const { data } = await supabase.from('expenses').insert({
+        const { data, error } = await supabase.from('expenses').insert({
           user_id:              userId,
           name:                 item.name,
           amount:               item.amount,
@@ -89,11 +92,13 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
           note:                 item.note,
           date:                 item.date,
           created_at:           Date.now(),
-          trip_id:              item.tripId ?? null,
+          subcategory:          item.subcategory ?? null,
+          details:              item.details ?? null,
           payment_type:         item.paymentType ?? null,
           payment_source_id:    item.paymentSourceId ?? null,
           linked_transaction_id: item.linkedTransactionId ?? null,
         }).select().single();
+        if (error) console.warn('[useExpenses] insert error:', error.message);
         if (data) setExpenses((prev) => [rowToExpense(data), ...prev]);
       }
     },
@@ -113,7 +118,8 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         if (updates.category          !== undefined) dbUpdates.category           = updates.category;
         if (updates.note              !== undefined) dbUpdates.note               = updates.note;
         if (updates.date              !== undefined) dbUpdates.date               = updates.date;
-        if (updates.tripId            !== undefined) dbUpdates.trip_id            = updates.tripId ?? null;
+        if (updates.subcategory       !== undefined) dbUpdates.subcategory        = updates.subcategory ?? null;
+        if (updates.details           !== undefined) dbUpdates.details            = updates.details ?? null;
         if (updates.paymentType       !== undefined) dbUpdates.payment_type       = updates.paymentType;
         if (updates.paymentSourceId   !== undefined) dbUpdates.payment_source_id  = updates.paymentSourceId;
         if (updates.linkedTransactionId !== undefined) dbUpdates.linked_transaction_id = updates.linkedTransactionId;
@@ -132,17 +138,6 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
     } else {
       await supabase.from('expenses').delete().eq('id', id);
       setExpenses((prev) => prev.filter((e) => e.id !== id));
-    }
-  }, [storageMode, expenses, localKey]);
-
-  const deleteExpensesByTripId = useCallback(async (tripId: string) => {
-    if (storageMode === 'local') {
-      const updated = expenses.filter((e) => e.tripId !== tripId);
-      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
-      setExpenses(updated);
-    } else {
-      await supabase.from('expenses').delete().eq('trip_id', tripId);
-      setExpenses((prev) => prev.filter((e) => e.tripId !== tripId));
     }
   }, [storageMode, expenses, localKey]);
 
@@ -177,7 +172,7 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
   }, [expenses]);
 
   return {
-    expenses, loading, refresh, addExpense, updateExpense, deleteExpense, deleteExpensesByTripId,
+    expenses, loading, refresh, addExpense, updateExpense, deleteExpense,
     currentMonthTotal, expensesByDate, expensesForDate, monthlyTotals,
   };
 }

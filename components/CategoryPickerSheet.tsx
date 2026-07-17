@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Categories } from '@/constants/theme';
@@ -23,7 +23,7 @@ interface Props {
 }
 
 export default function CategoryPickerSheet({ sheetRef, selected, onSelect, categories = Categories }: Props) {
-  const snapPoints = useMemo(() => ['55%'], []);
+  const snapPoints = useMemo(() => ['65%'], []);
 
   const renderBackdrop = useCallback(
     (props: any) => (
@@ -41,7 +41,7 @@ export default function CategoryPickerSheet({ sheetRef, selected, onSelect, cate
       backdropComponent={renderBackdrop}
       backgroundStyle={{ backgroundColor: C.bg }}
       handleIndicatorStyle={{ backgroundColor: C.outline }}>
-      <BottomSheetView style={styles.container}>
+      <BottomSheetScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Select Category</Text>
         <View style={styles.grid}>
           {categories.map((cat) => {
@@ -66,18 +66,17 @@ export default function CategoryPickerSheet({ sheetRef, selected, onSelect, cate
             );
           })}
         </View>
-      </BottomSheetView>
+      </BottomSheetScrollView>
     </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, paddingBottom: 20 },
+  container: { paddingHorizontal: 20, paddingBottom: 40 },
   title: { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   cell: {
-    width: '30%',
-    flexGrow: 1,
+    width: '31%',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 8,
