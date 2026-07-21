@@ -12,3 +12,7 @@ export async function getStorageMode(): Promise<StorageMode | null> {
 export async function setStorageMode(mode: StorageMode): Promise<void> {
   await AsyncStorage.setItem(KEY, mode);
 }
+
+export async function clearStorageMode(): Promise<void> {
+  await AsyncStorage.removeItem(KEY);
+}

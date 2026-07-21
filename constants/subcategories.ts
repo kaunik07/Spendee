@@ -105,6 +105,14 @@ export const Subcategories: Record<string, Subcategory[]> = {
     { id: 'other',     label: 'Other',     icon: 'dots-horizontal' },
   ],
 
+  entertainment: [
+    { id: 'concert', label: 'Concert', icon: 'microphone-variant' },
+    { id: 'movies',  label: 'Movies',  icon: 'filmstrip' },
+    { id: 'theater', label: 'Theater', icon: 'drama-masks' },
+    { id: 'arcade',  label: 'Arcade',  icon: 'gamepad-variant' },
+    { id: 'other',   label: 'Other',   icon: 'dots-horizontal' },
+  ],
+
   shopping: [
     { id: 'amazon',   label: 'Amazon',   icon: 'package-variant-closed' },
     {

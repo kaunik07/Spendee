@@ -20,7 +20,7 @@ import { Colors } from '@/constants/theme';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, loginWithBiometric, lastUser, requiresBiometric } = useAuthContext();
+  const { login, loginWithBiometric, lastUser, requiresBiometric, storageMode, forgetDevice } = useAuthContext();
 
   const [username, setUsername]           = useState('');
   const [password, setPassword]           = useState('');
@@ -56,6 +56,23 @@ export default function LoginScreen() {
   };
 
   const showBiometric = lastUser?.biometricEnabled && biometricType !== null;
+
+  const handleForgetDevice = () => {
+    Alert.alert(
+      'Reset This Device?',
+      'Clears any cached account and login session stored on this device (used for offline "local" accounts). This does not delete anything from the cloud. Use this if login seems stuck showing an old account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset', style: 'destructive',
+          onPress: async () => {
+            await forgetDevice();
+            Alert.alert('Done', 'This device has been reset. Sign up or log in fresh.');
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -150,6 +167,16 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Backend indicator — shows which Supabase project + mode this bundle uses.
+              Long-press to reset a stuck local session (see forgetDevice). */}
+          <Pressable onLongPress={handleForgetDevice} hitSlop={10}>
+            <Text style={styles.backendTag}>
+              backend: {(process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'MISSING').replace('https://', '').split('.')[0]}
+              {storageMode ? ` · mode: ${storageMode}` : ''}
+            </Text>
+            <Text style={styles.backendHint}>Long-press to reset this device</Text>
+          </Pressable>
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -159,6 +186,20 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 },
+  backendTag: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 16,
+    letterSpacing: 0.5,
+  },
+  backendHint: {
+    color: Colors.textMuted,
+    fontSize: 9,
+    textAlign: 'center',
+    marginTop: 2,
+    opacity: 0.6,
+  },
 
   logoArea: { alignItems: 'center', paddingTop: 32, paddingBottom: 36 },
   logoIcon: {

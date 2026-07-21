@@ -171,6 +171,13 @@ CREATE POLICY "credit_card_transactions_own" ON public.credit_card_transactions
 CREATE POLICY "budgets_own" ON public.budgets
   FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
+-- ── Realtime ──────────────────────────────────────────────
+-- Required for the app's live cross-device sync (postgres_changes).
+ALTER PUBLICATION supabase_realtime ADD TABLE
+  public.expenses, public.savings, public.bank_accounts,
+  public.account_transactions, public.credit_cards,
+  public.credit_card_transactions, public.budgets, public.profiles;
+
 -- ── Indexes ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_expenses_user_date ON public.expenses(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_savings_user       ON public.savings(user_id);

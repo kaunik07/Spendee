@@ -4,7 +4,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { StorageMode, getStorageMode, setStorageMode } from './storageMode';
+import { StorageMode, getStorageMode, setStorageMode, clearStorageMode } from './storageMode';
 
 export interface User {
   id: string;
@@ -142,6 +142,16 @@ export function useAuth() {
                 setUser(profile);
                 await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
                 if (profile.biometricEnabled) setRequiresBiometric(true);
+              } else {
+                // Session references a user with no profile row — e.g. the
+                // account was deleted directly in the database. Don't leave
+                // a zombie session cached for the next launch.
+                await Promise.all([
+                  SecureStore.deleteItemAsync(LAST_USER_KEY),
+                  SecureStore.deleteItemAsync(BIO_ACCESS_KEY),
+                  SecureStore.deleteItemAsync(BIO_REFRESH_KEY),
+                ]);
+                await supabase.auth.signOut();
               }
             } else {
               const raw = await SecureStore.getItemAsync(LAST_USER_KEY);
@@ -433,6 +443,31 @@ export function useAuth() {
     return {};
   }, [user]);
 
+  // ── Forget this device ─────────────────────────────────────
+  // Escape hatch for a stuck login: wipes every cached local account,
+  // cached session, and biometric token on this device, and signs out
+  // of Supabase. Local mode never talks to the backend, so nothing done
+  // server-side (e.g. deleting users in the database) can ever clear a
+  // stale local session on its own — this is the only way to clear it.
+  // Does not touch per-user app data (expenses, etc.); those simply
+  // become unreachable once their account no longer exists anywhere.
+  const forgetDevice = useCallback(async (): Promise<void> => {
+    await Promise.all([
+      AsyncStorage.removeItem(LOCAL_USERS_KEY),
+      AsyncStorage.removeItem(LOCAL_SESSION_KEY),
+      clearStorageMode(),
+      SecureStore.deleteItemAsync(LOCAL_BIO_USER_KEY),
+      SecureStore.deleteItemAsync(BIO_ACCESS_KEY),
+      SecureStore.deleteItemAsync(BIO_REFRESH_KEY),
+      SecureStore.deleteItemAsync(LAST_USER_KEY),
+    ]);
+    try { await supabase.auth.signOut(); } catch { /* no session to sign out of */ }
+    setUser(null);
+    setLastUser(null);
+    setRequiresBiometric(false);
+    setMode(null);
+  }, []);
+
   return {
     user,
     isLoading,
@@ -446,5 +481,6 @@ export function useAuth() {
     logout,
     toggleBiometric,
     deleteAccount,
+    forgetDevice,
   };
 }

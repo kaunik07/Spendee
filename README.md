@@ -75,7 +75,7 @@ Then press `i` for iOS simulator, `a` for Android, or scan the QR code with Expo
 Spendee supports two storage modes, chosen at sign-up:
 
 - **Local** — All data stored on-device using AsyncStorage. Works fully offline. No account needed beyond a local username/password.
-- **Online** — Data synced to Supabase with real-time updates across devices. Supports biometric login (Face ID / fingerprint).
+- **Online** — Data synced to Supabase with real-time updates across devices. Supports biometric login (Face ID / fingerprint). Expenses added while offline are queued locally and auto-sync to the cloud when connectivity returns.
 
 ---
 

@@ -20,17 +20,20 @@ import { useExpenseContext } from '@/store/ExpenseContext';
 import { useExpenseActions } from '@/store/useExpenseActions';
 import { Expense } from '@/store/useExpenses';
 
+const PENDING_AMBER = '#FFB74D';
+
 export default function HomeScreen() {
   const sheetRef = useRef<BottomSheet>(null);
   const router = useRouter();
   const { user } = useAuthContext();
-  const { expenses, refresh: refreshExpenses } = useExpenseContext();
+  const { expenses, refresh: refreshExpenses, pendingCount, syncing, flushOutbox } = useExpenseContext();
   const { deleteExpenseWithReversal }          = useExpenseActions();
 
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = async () => {
     setRefreshing(true);
     refreshExpenses();
+    flushOutbox();
     setTimeout(() => setRefreshing(false), 800);
   };
 
@@ -106,6 +109,20 @@ export default function HomeScreen() {
               </View>
             </View>
 
+            {/* Offline sync banner */}
+            {pendingCount > 0 && (
+              <View style={styles.syncBanner}>
+                <MaterialCommunityIcons
+                  name={syncing ? 'cloud-sync-outline' : 'cloud-off-outline'}
+                  size={16}
+                  color={PENDING_AMBER}
+                />
+                <Text style={styles.syncText}>
+                  {pendingCount} expense{pendingCount !== 1 ? 's' : ''} {syncing ? 'syncing…' : 'waiting to sync'}
+                </Text>
+              </View>
+            )}
+
             {/* Section Header */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Transactions</Text>
@@ -161,7 +178,15 @@ function ExpenseRow({ item, onDelete }: { item: Expense; onDelete: () => void })
           <Text style={[styles.expenseCatChip, { color: cat.color }]}>{displayLabel}</Text>
           {item.note ? <Text style={styles.expenseNote} numberOfLines={1}>· {item.note}</Text> : null}
         </View>
-        <Text style={styles.expenseDate}>{displayDate}</Text>
+        <View style={styles.expenseMeta}>
+          <Text style={styles.expenseDate}>{displayDate}</Text>
+          {item.pending && (
+            <View style={styles.pendingChip}>
+              <MaterialCommunityIcons name="cloud-off-outline" size={10} color={PENDING_AMBER} />
+              <Text style={styles.pendingChipText}>Pending sync</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={styles.expenseRight}>
@@ -232,6 +257,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: PENDING_AMBER + '18',
+    borderColor: PENDING_AMBER + '40',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  syncText: { color: PENDING_AMBER, fontSize: 12, fontWeight: '600' },
+
+  pendingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: PENDING_AMBER + '1A',
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  pendingChipText: { color: PENDING_AMBER, fontSize: 9, fontWeight: '700' },
 
   sectionHeader: {
     flexDirection: 'row',

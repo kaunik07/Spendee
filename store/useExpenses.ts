@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { OutboxExpense, getOutbox, saveOutbox, enqueueExpense, removeFromOutbox } from './outbox';
 
 export interface Expense {
   id: string;
@@ -17,6 +20,13 @@ export interface Expense {
   paymentType: 'bank_account' | 'credit_card' | null;
   paymentSourceId: string | null;       // account id or card id
   linkedTransactionId: string | null;   // transaction created in that account/card
+  pending?: boolean;                     // online mode: added offline, not yet synced to cloud
+}
+
+// The DB row shape the outbox stores is identical to what we insert — so
+// the same rowToExpense mapper turns an outbox item into a (pending) Expense.
+function outboxToExpense(o: OutboxExpense): Expense {
+  return { ...rowToExpense(o), pending: true };
 }
 
 function rowToExpense(row: any): Expense {
@@ -39,6 +49,7 @@ function rowToExpense(row: any): Expense {
 export function useExpenses(userId: string | null, storageMode: StorageMode | null) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [syncing, setSyncing]   = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_expenses_${userId}`;
 
@@ -67,14 +78,54 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         setLoading(false);
       });
     } else {
-      supabase.from('expenses').select('*').order('created_at', { ascending: false })
-        .then(({ data, error }) => {
-          if (error) console.warn('[useExpenses] fetch error:', error.message);
-          setExpenses((data ?? []).map(rowToExpense));
-          setLoading(false);
-        });
+      // Fetch cloud rows and merge in any not-yet-synced offline adds so
+      // pending expenses stay visible until they reach the server.
+      Promise.all([
+        supabase.from('expenses').select('*').order('created_at', { ascending: false }),
+        getOutbox(userId),
+      ]).then(([res, outbox]) => {
+        if (res.error) console.warn('[useExpenses] fetch error:', res.error.message);
+        const serverRows = (res.data ?? []).map(rowToExpense);
+        const serverIds  = new Set(serverRows.map((e) => e.id));
+        const pendingRows = outbox.filter((o) => !serverIds.has(o.id)).map(outboxToExpense);
+        setExpenses([...pendingRows, ...serverRows]);
+        setLoading(false);
+      });
     }
   }, [userId, storageMode, refreshKey]);
+
+  // Push queued offline expenses to the cloud. Idempotent: a duplicate-key
+  // error means the row already landed, so we treat it as synced. Any other
+  // error (offline) stops the run — it retries on the next trigger.
+  const flushOutbox = useCallback(async () => {
+    if (storageMode !== 'online' || !userId) return;
+    const items = await getOutbox(userId);
+    if (items.length === 0) return;
+
+    setSyncing(true);
+    let changed = false;
+    for (const it of items) {
+      const { error } = await supabase.from('expenses').insert(it);
+      if (!error || (error as any).code === '23505') {
+        await removeFromOutbox(userId, it.id);
+        changed = true;
+      } else {
+        break; // network/server error — keep the rest queued, retry later
+      }
+    }
+    setSyncing(false);
+    if (changed) refresh();
+  }, [userId, storageMode, refresh]);
+
+  // Flush on mount, whenever the app returns to the foreground, and on a
+  // gentle interval — no native connectivity module needed.
+  useEffect(() => {
+    if (storageMode !== 'online' || !userId) return;
+    flushOutbox();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') flushOutbox(); });
+    const interval = setInterval(flushOutbox, 25000);
+    return () => { sub.remove(); clearInterval(interval); };
+  }, [userId, storageMode, flushOutbox]);
 
   const addExpense = useCallback(
     async (item: Omit<Expense, 'id' | 'createdAt'>) => {
@@ -84,25 +135,29 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         await AsyncStorage.setItem(localKey, JSON.stringify(updated));
         setExpenses(updated);
       } else {
-        const { data, error } = await supabase.from('expenses').insert({
-          user_id:              userId,
-          name:                 item.name,
-          amount:               item.amount,
-          category:             item.category,
-          note:                 item.note,
-          date:                 item.date,
-          created_at:           Date.now(),
-          subcategory:          item.subcategory ?? null,
-          details:              item.details ?? null,
-          payment_type:         item.paymentType ?? null,
-          payment_source_id:    item.paymentSourceId ?? null,
+        // Online mode is offline-tolerant: write to the outbox with a
+        // client-generated id, show it immediately, then try to sync.
+        const row: OutboxExpense = {
+          id:                    Crypto.randomUUID(),
+          user_id:               userId!,
+          name:                  item.name,
+          amount:                item.amount,
+          category:              item.category,
+          note:                  item.note,
+          date:                  item.date,
+          created_at:            Date.now(),
+          subcategory:           item.subcategory ?? null,
+          details:               item.details ?? null,
+          payment_type:          item.paymentType ?? null,
+          payment_source_id:     item.paymentSourceId ?? null,
           linked_transaction_id: item.linkedTransactionId ?? null,
-        }).select().single();
-        if (error) console.warn('[useExpenses] insert error:', error.message);
-        if (data) setExpenses((prev) => [rowToExpense(data), ...prev]);
+        };
+        await enqueueExpense(userId!, row);
+        setExpenses((prev) => [outboxToExpense(row), ...prev]);
+        flushOutbox(); // fire-and-forget; stays queued if offline
       }
     },
-    [userId, storageMode, expenses, localKey]
+    [userId, storageMode, expenses, localKey, flushOutbox]
   );
 
   const updateExpense = useCallback(
@@ -112,6 +167,26 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         await AsyncStorage.setItem(localKey, JSON.stringify(updated));
         setExpenses(updated);
       } else {
+        // If the expense is still queued offline, edit the queued payload
+        // instead of updating a row the server doesn't have yet.
+        const outbox = await getOutbox(userId!);
+        const idx = outbox.findIndex((o) => o.id === id);
+        if (idx !== -1) {
+          const o = outbox[idx];
+          if (updates.name            !== undefined) o.name                  = updates.name;
+          if (updates.amount          !== undefined) o.amount                = updates.amount;
+          if (updates.category        !== undefined) o.category              = updates.category;
+          if (updates.note            !== undefined) o.note                  = updates.note;
+          if (updates.date            !== undefined) o.date                  = updates.date;
+          if (updates.subcategory     !== undefined) o.subcategory           = updates.subcategory ?? null;
+          if (updates.details         !== undefined) o.details               = updates.details ?? null;
+          if (updates.paymentType     !== undefined) o.payment_type          = updates.paymentType;
+          if (updates.paymentSourceId !== undefined) o.payment_source_id     = updates.paymentSourceId;
+          if (updates.linkedTransactionId !== undefined) o.linked_transaction_id = updates.linkedTransactionId;
+          await saveOutbox(userId!, outbox);
+          setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...updates } : e)));
+          return;
+        }
         const dbUpdates: Record<string, any> = {};
         if (updates.name              !== undefined) dbUpdates.name               = updates.name;
         if (updates.amount            !== undefined) dbUpdates.amount             = updates.amount;
@@ -127,7 +202,7 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...updates } : e)));
       }
     },
-    [storageMode, expenses, localKey]
+    [storageMode, expenses, localKey, userId]
   );
 
   const deleteExpense = useCallback(async (id: string) => {
@@ -136,10 +211,17 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setExpenses(updated);
     } else {
-      await supabase.from('expenses').delete().eq('id', id);
+      // A still-queued offline add is deleted by dropping it from the outbox
+      // (there's no server row to delete yet).
+      const outbox = await getOutbox(userId!);
+      if (outbox.some((o) => o.id === id)) {
+        await removeFromOutbox(userId!, id);
+      } else {
+        await supabase.from('expenses').delete().eq('id', id);
+      }
       setExpenses((prev) => prev.filter((e) => e.id !== id));
     }
-  }, [storageMode, expenses, localKey]);
+  }, [storageMode, expenses, localKey, userId]);
 
   const currentMonthTotal = useCallback(() => {
     const now = new Date();
@@ -171,8 +253,11 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
     return map;
   }, [expenses]);
 
+  const pendingCount = expenses.reduce((n, e) => n + (e.pending ? 1 : 0), 0);
+
   return {
-    expenses, loading, refresh, addExpense, updateExpense, deleteExpense,
+    expenses, loading, syncing, pendingCount, refresh, flushOutbox,
+    addExpense, updateExpense, deleteExpense,
     currentMonthTotal, expensesByDate, expensesForDate, monthlyTotals,
   };
 }
