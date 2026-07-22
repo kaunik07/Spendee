@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode, getStorageMode, setStorageMode, clearStorageMode } from './storageMode';
+import { migrateLocalDataToCloud } from './migrateToCloud';
 
 export interface User {
   id: string;
@@ -71,6 +72,31 @@ async function fetchProfile(userId: string): Promise<User | null> {
   };
 }
 
+// ── Guest (no-account, on-device) ─────────────────────────
+function toUser(u: LocalUser): User {
+  return { id: u.id, username: u.username, biometricEnabled: u.biometricEnabled, createdAt: u.createdAt };
+}
+
+// Find or create the single on-device guest user and make it the active
+// local session. Guest ids are prefixed `guest_` so they're distinguishable.
+async function ensureGuestUser(): Promise<User> {
+  const users = await localGetUsers();
+  let guest = users.find((u) => u.id.startsWith('guest_'));
+  if (!guest) {
+    guest = {
+      id: `guest_${Crypto.randomUUID()}`,
+      username: 'Guest',
+      passwordHash: '',
+      biometricEnabled: false,
+      createdAt: new Date().toISOString(),
+    };
+    await localSaveUsers([...users, guest]);
+  }
+  await AsyncStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify({ userId: guest.id }));
+  await setStorageMode('local');
+  return toUser(guest);
+}
+
 // ── Hook ─────────────────────────────────────────────────
 export function useAuth() {
   const [user, setUser]                           = useState<User | null>(null);
@@ -80,108 +106,84 @@ export function useAuth() {
   const [storageMode, setMode]                    = useState<StorageMode | null>(null);
 
   // ── Init ────────────────────────────────────────────────
+  // Resolve to exactly one usable session: an online account if a valid
+  // Supabase session exists, otherwise the on-device guest (resumed or fresh).
+  // The app is therefore always usable — there is no auth wall.
   useEffect(() => {
-    // settled ensures setIsLoading(false) is called exactly once,
-    // whether via INITIAL_SESSION, local-mode init, or the safety timeout.
-    let settled = false;
-    const settle = () => {
-      if (!settled) {
-        settled = true;
-        setIsLoading(false);
-      }
-    };
+    let active = true;
+    const safetyTimer = setTimeout(() => { if (active) setIsLoading(false); }, 6000);
 
-    // Safety net: if INITIAL_SESSION never fires (bad env vars, network error,
-    // Supabase client init failure), unblock the UI after 6 seconds.
-    const safetyTimer = setTimeout(settle, 6000);
-
-    // Handle local mode separately (no Supabase auth involved)
     (async () => {
-      const mode = await getStorageMode();
-      setMode(mode);
-
-      if (mode === 'local') {
-        const sessionRaw = await AsyncStorage.getItem(LOCAL_SESSION_KEY);
-        if (sessionRaw) {
-          const { userId } = JSON.parse(sessionRaw);
-          const users = await localGetUsers();
-          const found = users.find((u) => u.id === userId);
-          if (found) {
-            const u: User = { id: found.id, username: found.username, biometricEnabled: found.biometricEnabled, createdAt: found.createdAt };
-            setUser(u);
-            await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(u));
-            if (found.biometricEnabled) setRequiresBiometric(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const profile = await fetchProfile(session.user.id);
+          if (profile) {
+            await setStorageMode('online');
+            if (!active) return;
+            setMode('online');
+            setUser(profile);
+            setLastUser(profile);
+            await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
+            if (profile.biometricEnabled) setRequiresBiometric(true);
+            return;
           }
-        } else {
-          const raw = await SecureStore.getItemAsync(LAST_USER_KEY);
-          if (raw) setLastUser(JSON.parse(raw));
+          // Session points at a deleted account — drop it and fall to guest.
+          await supabase.auth.signOut();
         }
-        settle();
+
+        // No online session → resume the local/guest session, or create a guest.
+        const mode = await getStorageMode();
+        const sessionRaw = await AsyncStorage.getItem(LOCAL_SESSION_KEY);
+        if (mode === 'local' && sessionRaw) {
+          const { userId } = JSON.parse(sessionRaw);
+          const found = (await localGetUsers()).find((u) => u.id === userId);
+          if (found) {
+            if (!active) return;
+            setMode('local');
+            setUser(toUser(found));
+            await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(toUser(found)));
+            // Only real (password) local accounts use biometric; guests don't.
+            if (found.biometricEnabled && !found.id.startsWith('guest_')) setRequiresBiometric(true);
+            return;
+          }
+        }
+
+        const guest = await ensureGuestUser();
+        if (!active) return;
+        setMode('local');
+        setUser(guest);
+      } catch (_) {
+        try {
+          const guest = await ensureGuestUser();
+          if (active) { setMode('local'); setUser(guest); }
+        } catch { /* give up — safety timer unblocks the UI */ }
+      } finally {
+        if (active) setIsLoading(false);
       }
-      // Online mode: settled via INITIAL_SESSION below (or safety timeout)
     })();
 
-    // For online mode, use onAuthStateChange as the single source of truth.
-    // INITIAL_SESSION fires once AsyncStorage has been read — this is more
-    // reliable than getSession() on Android where storage reads can be slow.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'INITIAL_SESSION') {
-          try {
-            const mode = await getStorageMode();
-            if (mode === 'local') return; // local mode already settled above
-            if (session) {
-              // If mode was wiped (cache clear/reinstall) but a Supabase session
-              // still exists, this must be an online user — restore the mode.
-              if (!mode) {
-                await setStorageMode('online');
-                setMode('online');
-              }
-              const profile = await fetchProfile(session.user.id);
-              if (profile) {
-                setUser(profile);
-                await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
-                if (profile.biometricEnabled) setRequiresBiometric(true);
-              } else {
-                // Session references a user with no profile row — e.g. the
-                // account was deleted directly in the database. Don't leave
-                // a zombie session cached for the next launch.
-                await Promise.all([
-                  SecureStore.deleteItemAsync(LAST_USER_KEY),
-                  SecureStore.deleteItemAsync(BIO_ACCESS_KEY),
-                  SecureStore.deleteItemAsync(BIO_REFRESH_KEY),
-                ]);
-                await supabase.auth.signOut();
-              }
-            } else {
-              const raw = await SecureStore.getItemAsync(LAST_USER_KEY);
-              if (raw) setLastUser(JSON.parse(raw));
-            }
-          } catch (_) {
-            // init failed — still unblock the UI
-          } finally {
-            settle();
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setRequiresBiometric(false);
-        } else if (event === 'TOKEN_REFRESHED' && session) {
-          const profile = await fetchProfile(session.user.id);
-          if (profile) setUser(profile);
-        }
+    // Keep the session token fresh in the background.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'TOKEN_REFRESHED' && session) {
+        const profile = await fetchProfile(session.user.id);
+        if (profile) setUser(profile);
       }
-    );
+    });
+
     return () => {
+      active = false;
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
   }, []);
 
-  // ── Sign up ─────────────────────────────────────────────
+  // ── Create account (also backs up a guest to the cloud) ──
+  // Always creates an online account. If the current session is a guest, its
+  // on-device data is migrated up into the new account.
   const signUp = useCallback(async (
     username: string,
     password: string,
-    mode: StorageMode,
   ): Promise<{ error?: string }> => {
     const trimmed = username.trim();
     if (!trimmed || !password) return { error: 'All fields are required' };
@@ -193,46 +195,34 @@ export function useAuth() {
     }
     if (password.length < 4)   return { error: 'Password must be at least 4 characters' };
 
-    await setStorageMode(mode);
-    setMode(mode);
-
-    if (mode === 'local') {
-      const users = await localGetUsers();
-      if (users.find((u) => u.username.toLowerCase() === trimmed.toLowerCase())) {
+    const { data, error } = await supabase.auth.signUp({ email: toEmail(trimmed), password });
+    if (error) {
+      if (error.message.toLowerCase().includes('already registered') ||
+          error.message.toLowerCase().includes('already been registered')) {
         return { error: 'Username already taken' };
       }
-      const id           = `local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const passwordHash = await localHashPassword(trimmed, password);
-      const createdAt    = new Date().toISOString();
-      const newLocalUser: LocalUser = { id, username: trimmed, passwordHash, biometricEnabled: false, createdAt };
-      await localSaveUsers([...users, newLocalUser]);
-      await AsyncStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify({ userId: id }));
-      const newUser: User = { id, username: trimmed, biometricEnabled: false, createdAt };
-      setUser(newUser);
-      setLastUser(newUser);
-      await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(newUser));
-      return {};
-    } else {
-      // Online — DB trigger creates the profile automatically
-      const { data, error } = await supabase.auth.signUp({ email: toEmail(trimmed), password });
-      if (error) {
-        if (error.message.toLowerCase().includes('already registered') ||
-            error.message.toLowerCase().includes('already been registered')) {
-          return { error: 'Username already taken' };
-        }
-        return { error: error.message };
-      }
-      if (!data.user) return { error: 'Sign up failed, please try again' };
-      // The DB trigger stores the lowercased email local part — mirror that here
-      const newUser: User = { id: data.user.id, username: trimmed.toLowerCase(), biometricEnabled: false, createdAt: data.user.created_at };
-      setUser(newUser);
-      setLastUser(newUser);
-      await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(newUser));
-      return {};
+      return { error: error.message };
     }
-  }, []);
+    if (!data.user) return { error: 'Sign up failed, please try again' };
 
-  // ── Login ────────────────────────────────────────────────
+    // Back up the guest's on-device data into the fresh cloud account.
+    if (user?.id.startsWith('guest_')) {
+      const mig = await migrateLocalDataToCloud(user.id, data.user.id);
+      if (mig.error) console.warn('[signUp] data migration:', mig.error);
+    }
+
+    await setStorageMode('online');
+    setMode('online');
+    // The DB trigger stores the lowercased email local part — mirror that here.
+    const newUser: User = { id: data.user.id, username: trimmed.toLowerCase(), biometricEnabled: false, createdAt: data.user.created_at };
+    setUser(newUser);
+    setLastUser(newUser);
+    await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(newUser));
+    return {};
+  }, [user]);
+
+  // ── Login (existing cloud account) ────────────────────────
+  // Switches to the account; any on-device guest data is left untouched.
   const login = useCallback(async (
     username: string,
     password: string,
@@ -240,32 +230,16 @@ export function useAuth() {
     const trimmed = username.trim();
     if (!trimmed || !password) return { error: 'All fields are required' };
 
-    const mode = await getStorageMode();
-
-    if (mode === 'local') {
-      const users = await localGetUsers();
-      const found = users.find((u) => u.username.toLowerCase() === trimmed.toLowerCase());
-      if (!found) return { error: 'Invalid username or password' };
-      const hash = await localHashPassword(trimmed, password);
-      if (hash !== found.passwordHash) return { error: 'Invalid username or password' };
-      await AsyncStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify({ userId: found.id }));
-      const u: User = { id: found.id, username: found.username, biometricEnabled: found.biometricEnabled, createdAt: found.createdAt };
-      setUser(u);
-      setLastUser(u);
-      await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(u));
-      return {};
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: toEmail(trimmed), password });
-      if (error || !data.user) return { error: 'Invalid username or password' };
-      const profile = await fetchProfile(data.user.id);
-      if (!profile) return { error: 'Profile not found' };
-      await setStorageMode('online');
-      setMode('online');
-      setUser(profile);
-      setLastUser(profile);
-      await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
-      return {};
-    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email: toEmail(trimmed), password });
+    if (error || !data.user) return { error: 'Invalid username or password' };
+    const profile = await fetchProfile(data.user.id);
+    if (!profile) return { error: 'Profile not found' };
+    await setStorageMode('online');
+    setMode('online');
+    setUser(profile);
+    setLastUser(profile);
+    await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
+    return {};
   }, []);
 
   // ── Biometric unlock (lock screen — session still active) ─
@@ -328,16 +302,11 @@ export function useAuth() {
   }, []);
 
   // ── Logout ────────────────────────────────────────────────
+  // Signs out of the cloud account and drops back to a fresh guest session,
+  // so the app stays usable. On-device guest data (if any) is left intact.
   const logout = useCallback(async () => {
     const mode = await getStorageMode();
-    if (mode === 'local') {
-      if (user?.biometricEnabled) {
-        await SecureStore.setItemAsync(LOCAL_BIO_USER_KEY, user.id);
-      } else {
-        await SecureStore.deleteItemAsync(LOCAL_BIO_USER_KEY);
-      }
-      await AsyncStorage.removeItem(LOCAL_SESSION_KEY);
-    } else {
+    if (mode === 'online') {
       if (user?.biometricEnabled) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
@@ -350,7 +319,9 @@ export function useAuth() {
       }
       await supabase.auth.signOut();
     }
-    setUser(null);
+    const guest = await ensureGuestUser();
+    setUser(guest);
+    setMode('local');
     setRequiresBiometric(false);
   }, [user]);
 
@@ -394,8 +365,11 @@ export function useAuth() {
       await supabase.auth.signOut();
     }
 
-    setUser(null);
+    // Return to a fresh guest session so the app stays usable.
+    const guest = await ensureGuestUser();
+    setUser(guest);
     setLastUser(null);
+    setMode('local');
     setRequiresBiometric(false);
     return {};
   }, [user]);
@@ -462,14 +436,19 @@ export function useAuth() {
       SecureStore.deleteItemAsync(LAST_USER_KEY),
     ]);
     try { await supabase.auth.signOut(); } catch { /* no session to sign out of */ }
-    setUser(null);
+    // Land on a fresh guest so the app stays usable after a reset.
+    const guest = await ensureGuestUser();
+    setUser(guest);
     setLastUser(null);
     setRequiresBiometric(false);
-    setMode(null);
+    setMode('local');
   }, []);
+
+  const isGuest = (user?.id ?? '').startsWith('guest_');
 
   return {
     user,
+    isGuest,
     isLoading,
     lastUser,
     requiresBiometric,

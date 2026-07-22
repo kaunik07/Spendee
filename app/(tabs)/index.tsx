@@ -26,13 +26,14 @@ function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { user }                    = useAuthContext();
+  const { user, isGuest }           = useAuthContext();
   const { netWorth }                = useAccountsContext();
   const { totalOutstanding }        = useCreditCardsContext();
   const { expenses, refresh: refreshExpenses } = useExpenseContext();
   const { budgets, refresh: refreshBudgets }   = useBudgetsContext();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const handleRefresh = () => {
     setRefreshing(true);
     refreshExpenses();
@@ -89,14 +90,29 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.appName}>Spendee</Text>
-            <Text style={styles.headerSub}>Welcome back, {user?.username ?? 'there'}</Text>
+            <Text style={styles.headerSub}>
+              {isGuest ? 'Track your spending' : `Welcome back, ${user?.username ?? 'there'}`}
+            </Text>
           </View>
           <TouchableOpacity style={styles.avatarBadge} onPress={() => router.push('/profile')} activeOpacity={0.8}>
             <Text style={styles.avatarInitials}>
-              {user?.username.slice(0, 2).toUpperCase() ?? '??'}
+              {isGuest ? 'G' : (user?.username.slice(0, 2).toUpperCase() ?? '??')}
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Guest backup nudge */}
+        {isGuest && !bannerDismissed && (
+          <View style={styles.guestBanner}>
+            <MaterialCommunityIcons name="cloud-upload-outline" size={18} color={Colors.primary} />
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => router.push('/profile')} activeOpacity={0.8}>
+              <Text style={styles.guestBannerText}>Back up your data to the cloud</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setBannerDismissed(true)} hitSlop={10}>
+              <MaterialCommunityIcons name="close" size={16} color={Colors.outline} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* ── Net Worth (hero card) ── */}
         <TouchableOpacity style={styles.heroCard} onPress={() => router.push('/profile')} activeOpacity={0.85}>
@@ -252,6 +268,20 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary + '40',
   },
   avatarInitials: { color: Colors.primary, fontSize: 14, fontWeight: '800' },
+
+  guestBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.primaryMuted,
+    borderColor: Colors.primary + '40',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 16,
+  },
+  guestBannerText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
 
   // Hero card
   heroCard: {

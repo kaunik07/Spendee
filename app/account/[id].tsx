@@ -13,10 +13,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Crypto from 'expo-crypto';
 import AddAccountTransactionSheet from '@/components/AddAccountTransactionSheet';
 import { useAccountsContext } from '@/store/AccountsContext';
 import { useAuthContext } from '@/store/AuthContext';
 import { useAccountTransactions, AccountTransaction } from '@/store/useAccountTransactions';
+import { enqueue, opId, flushAndNotify } from '@/store/syncQueue';
+import { notifySync } from '@/store/syncBus';
 import { Colors } from '@/constants/theme';
 
 const BANK_BLUE     = '#82B1FF';
@@ -88,15 +91,27 @@ export default function AccountDetailScreen() {
   };
 
   // ── Add transaction ──
+  // Online: queue the transaction insert + a balance delta together (offline-safe,
+  // idempotent, concurrent-multi-device-safe). Local (guest): write directly.
   const handleSave = async (
     type: 'deposit' | 'withdrawal',
     amount: number,
     note: string,
   ) => {
-    if (!account) return;
-    await addTransaction(type, amount, note, todayStr());
+    if (!account || !user?.id) return;
     const delta = type === 'deposit' ? amount : -amount;
-    await updateAccount(account.id, account.name, account.balance + delta);
+    if (storageMode === 'online') {
+      const txnId = Crypto.randomUUID();
+      await enqueue(user.id,
+        { id: opId(), kind: 'insert', table: 'account_transactions', row: { id: txnId, account_id: account.id, user_id: user.id, type, amount, note: note.trim(), date: todayStr(), created_at: Date.now() } },
+        { id: opId(), kind: 'balanceAccount', accountId: account.id, delta },
+      );
+      notifySync();
+      flushAndNotify(user.id);
+    } else {
+      await addTransaction(type, amount, note, todayStr());
+      await updateAccount(account.id, account.name, account.balance + delta);
+    }
   };
 
   // ── Delete transaction ──
@@ -110,10 +125,19 @@ export default function AccountDetailScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            if (!account) return;
-            await deleteTransaction(txn.id);
+            if (!account || !user?.id) return;
             const delta = txn.type === 'deposit' ? -txn.amount : txn.amount;
-            await updateAccount(account.id, account.name, account.balance + delta);
+            if (storageMode === 'online') {
+              await enqueue(user.id,
+                { id: opId(), kind: 'delete', table: 'account_transactions', rowId: txn.id },
+                { id: opId(), kind: 'balanceAccount', accountId: account.id, delta },
+              );
+              notifySync();
+              flushAndNotify(user.id);
+            } else {
+              await deleteTransaction(txn.id);
+              await updateAccount(account.id, account.name, account.balance + delta);
+            }
           },
         },
       ]

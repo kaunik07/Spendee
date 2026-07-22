@@ -1,7 +1,16 @@
 -- ============================================================
--- Spendee — Supabase Schema (complete, v3)
--- Run this in the Supabase SQL Editor (Dashboard → SQL Editor)
--- on a fresh project. Creates every table the app uses.
+-- Spendee — initial schema (source of truth for the backend)
+--
+-- This is a Supabase CLI migration. To provision a fresh project:
+--   supabase link --project-ref <ref>
+--   supabase db push
+-- (do NOT hand-run SQL in the dashboard — keep every change in a
+--  migration file so environments stay reproducible and identical).
+--
+-- Creates: profiles, expenses, savings, bank_accounts,
+-- account_transactions, credit_cards, credit_card_transactions,
+-- budgets — plus the new-user profile trigger, delete_user RPC,
+-- RLS policies, realtime publication, and indexes.
 -- ============================================================
 
 -- ── Profiles ──────────────────────────────────────────────

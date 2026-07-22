@@ -14,12 +14,15 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Crypto from 'expo-crypto';
 import AddCreditCardTransactionSheet from '@/components/AddCreditCardTransactionSheet';
 import { useAccountsContext } from '@/store/AccountsContext';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useAuthContext } from '@/store/AuthContext';
 import { useCreditCardTransactions, CreditCardTransaction } from '@/store/useCreditCardTransactions';
 import { addAccountTransactionDirect, deleteAccountTransactionDirect } from '@/store/useAccountTransactions';
+import { SyncOp, enqueue, opId, flushAndNotify } from '@/store/syncQueue';
+import { notifySync } from '@/store/syncBus';
 import { Colors } from '@/constants/theme';
 
 const CARD_COLOR    = '#E8906A';   // coral — credit card accent
@@ -92,6 +95,8 @@ export default function CreditCardDetailScreen() {
   };
 
   // ── Add transaction ──
+  // Online: queue the card transaction + card balance delta (and, for a payment
+  // from a bank account, the bank withdrawal + bank balance delta) as one bundle.
   const handleSave = async (
     type: 'charge' | 'payment',
     amount: number,
@@ -99,25 +104,36 @@ export default function CreditCardDetailScreen() {
     bankAccountId: string | null,
   ) => {
     if (!card || !user?.id) return;
-    let linkedBankTransactionId: string | null = null;
-    // if a bank account was used to pay, create a withdrawal record and deduct balance
-    if (type === 'payment' && bankAccountId) {
-      const bankAccount = accounts.find((a) => a.id === bankAccountId);
-      if (bankAccount) {
-        linkedBankTransactionId = await addAccountTransactionDirect(user.id, storageMode, {
-          accountId: bankAccountId,
-          type:      'withdrawal',
-          amount,
-          note:      `Credit Card Payment - ${card.name}`,
-          date:      todayStr(),
-        });
-        await updateAccount(bankAccountId, bankAccount.name, bankAccount.balance - amount);
-      }
-    }
-    await addTransaction(type, amount, note, todayStr(), bankAccountId, linkedBankTransactionId);
-    // charge increases outstanding, payment reduces it (can go negative if overpaid)
     const cardDelta = type === 'charge' ? amount : -amount;
-    await updateCard(card.id, card.name, card.outstandingBalance + cardDelta, card.creditLimit);
+
+    if (storageMode === 'online') {
+      const bundle: SyncOp[] = [];
+      let linkedBankTransactionId: string | null = null;
+      if (type === 'payment' && bankAccountId) {
+        linkedBankTransactionId = Crypto.randomUUID();
+        bundle.push({ id: opId(), kind: 'insert', table: 'account_transactions', row: { id: linkedBankTransactionId, account_id: bankAccountId, user_id: user.id, type: 'withdrawal', amount, note: `Credit Card Payment - ${card.name}`, date: todayStr(), created_at: Date.now() } });
+        bundle.push({ id: opId(), kind: 'balanceAccount', accountId: bankAccountId, delta: -amount });
+      }
+      const ccTxnId = Crypto.randomUUID();
+      bundle.push({ id: opId(), kind: 'insert', table: 'credit_card_transactions', row: { id: ccTxnId, card_id: card.id, user_id: user.id, type, amount, note: note.trim(), date: todayStr(), bank_account_id: bankAccountId, linked_bank_transaction_id: linkedBankTransactionId, created_at: Date.now() } });
+      bundle.push({ id: opId(), kind: 'balanceCard', cardId: card.id, delta: cardDelta });
+      await enqueue(user.id, ...bundle);
+      notifySync();
+      flushAndNotify(user.id);
+    } else {
+      let linkedBankTransactionId: string | null = null;
+      if (type === 'payment' && bankAccountId) {
+        const bankAccount = accounts.find((a) => a.id === bankAccountId);
+        if (bankAccount) {
+          linkedBankTransactionId = await addAccountTransactionDirect(user.id, storageMode, {
+            accountId: bankAccountId, type: 'withdrawal', amount, note: `Credit Card Payment - ${card.name}`, date: todayStr(),
+          });
+          await updateAccount(bankAccountId, bankAccount.name, bankAccount.balance - amount);
+        }
+      }
+      await addTransaction(type, amount, note, todayStr(), bankAccountId, linkedBankTransactionId);
+      await updateCard(card.id, card.name, card.outstandingBalance + cardDelta, card.creditLimit);
+    }
   };
 
   // ── Delete transaction ──
@@ -132,18 +148,29 @@ export default function CreditCardDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!card || !user?.id) return;
-            await deleteTransaction(txn.id);
-            // reverse credit card balance
-            const cardDelta = txn.type === 'charge' ? -txn.amount : txn.amount;
-            await updateCard(card.id, card.name, card.outstandingBalance + cardDelta, card.creditLimit);
-            // if the payment came from a bank account, refund it and delete the linked withdrawal
-            if (txn.type === 'payment' && txn.bankAccountId) {
-              const bankAccount = accounts.find((a) => a.id === txn.bankAccountId);
-              if (bankAccount) {
-                await updateAccount(txn.bankAccountId, bankAccount.name, bankAccount.balance + txn.amount);
+            const cardDelta = txn.type === 'charge' ? -txn.amount : txn.amount; // reverse
+
+            if (storageMode === 'online') {
+              const bundle: SyncOp[] = [
+                { id: opId(), kind: 'delete', table: 'credit_card_transactions', rowId: txn.id },
+                { id: opId(), kind: 'balanceCard', cardId: card.id, delta: cardDelta },
+              ];
+              if (txn.type === 'payment' && txn.bankAccountId) {
+                bundle.push({ id: opId(), kind: 'balanceAccount', accountId: txn.bankAccountId, delta: txn.amount }); // refund
+                if (txn.linkedBankTransactionId) {
+                  bundle.push({ id: opId(), kind: 'delete', table: 'account_transactions', rowId: txn.linkedBankTransactionId });
+                }
               }
-              if (txn.linkedBankTransactionId) {
-                await deleteAccountTransactionDirect(user.id, storageMode, txn.linkedBankTransactionId);
+              await enqueue(user.id, ...bundle);
+              notifySync();
+              flushAndNotify(user.id);
+            } else {
+              await deleteTransaction(txn.id);
+              await updateCard(card.id, card.name, card.outstandingBalance + cardDelta, card.creditLimit);
+              if (txn.type === 'payment' && txn.bankAccountId) {
+                const bankAccount = accounts.find((a) => a.id === txn.bankAccountId);
+                if (bankAccount) await updateAccount(txn.bankAccountId, bankAccount.name, bankAccount.balance + txn.amount);
+                if (txn.linkedBankTransactionId) await deleteAccountTransactionDirect(user.id, storageMode, txn.linkedBankTransactionId);
               }
             }
           },

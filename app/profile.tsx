@@ -23,7 +23,7 @@ const CARD_COLOR = '#E8906A';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user }                    = useAuthContext();
+  const { user, isGuest }           = useAuthContext();
   const { accounts, netWorth }      = useAccountsContext();
   const { cards, totalOutstanding } = useCreditCardsContext();
 
@@ -66,11 +66,35 @@ export default function ProfileScreen() {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
-          <Text style={styles.username}>{user.username}</Text>
+          <Text style={styles.username}>{isGuest ? 'Guest' : user.username}</Text>
           <Text style={styles.memberSince}>
-            Member since {new Date(user.createdAt).toLocaleDateString('default', { month: 'long', year: 'numeric' })}
+            {isGuest
+              ? 'Saved on this device'
+              : `Member since ${new Date(user.createdAt).toLocaleDateString('default', { month: 'long', year: 'numeric' })}`}
           </Text>
         </View>
+
+        {/* ── Guest: back up / log in ── */}
+        {isGuest && (
+          <View style={styles.section}>
+            <View style={styles.guestCard}>
+              <View style={styles.guestIconWrap}>
+                <MaterialCommunityIcons name="cloud-off-outline" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.guestTitle}>You&apos;re using Spendee as a guest</Text>
+              <Text style={styles.guestDesc}>
+                Your data is saved on this device only. Back it up to sync across devices and never lose it.
+              </Text>
+              <TouchableOpacity style={styles.guestPrimaryBtn} onPress={() => router.push('/signup')} activeOpacity={0.85}>
+                <MaterialCommunityIcons name="cloud-upload-outline" size={18} color={Colors.onPrimary} />
+                <Text style={styles.guestPrimaryText}>Back up to cloud</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.guestSecondaryBtn} onPress={() => router.push('/login')} activeOpacity={0.8}>
+                <Text style={styles.guestSecondaryText}>I already have an account</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* ── Net Worth Summary ── */}
         <View style={styles.section}>
@@ -332,6 +356,33 @@ const styles = StyleSheet.create({
   memberSince: { color: Colors.textSecondary, fontSize: 13, marginTop: 4 },
 
   section:      { marginBottom: 24 },
+
+  guestCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: Colors.primary + '40',
+    alignItems: 'center',
+    gap: 8,
+  },
+  guestIconWrap: {
+    width: 44, height: 44, borderRadius: 14,
+    backgroundColor: Colors.primaryMuted,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 2,
+  },
+  guestTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center' },
+  guestDesc:  { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 18, marginBottom: 4 },
+  guestPrimaryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary, borderRadius: 14,
+    paddingVertical: 13, paddingHorizontal: 20, alignSelf: 'stretch',
+  },
+  guestPrimaryText: { color: Colors.onPrimary, fontSize: 15, fontWeight: '700' },
+  guestSecondaryBtn: { paddingVertical: 8 },
+  guestSecondaryText: { color: Colors.primary, fontSize: 14, fontWeight: '600' },
+
   sectionLabel: {
     color: Colors.textSecondary,
     fontSize: 11,

@@ -77,7 +77,7 @@ const lock = StyleSheet.create({
 
 // ── Auth guard + routing ──────────────────────────────────
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, requiresBiometric } = useAuthContext();
+  const { user, isGuest, isLoading, requiresBiometric } = useAuthContext();
   const segments = useSegments();
   const router   = useRouter();
 
@@ -85,12 +85,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
     const inAuthScreen = segments[0] === 'login' || segments[0] === 'signup';
 
-    if (!user && !requiresBiometric && !inAuthScreen) {
-      router.replace('/login');
-    } else if ((user || requiresBiometric) && inAuthScreen) {
+    // The app is always usable as a guest, so there's no auth wall. We only
+    // bounce a signed-in (real, non-guest) account away from the login/signup
+    // screens — guests may freely visit them to log in or create an account.
+    if (user && !isGuest && !requiresBiometric && inAuthScreen) {
       router.replace('/(tabs)');
     }
-  }, [user, isLoading, requiresBiometric, segments]);
+  }, [user, isGuest, isLoading, requiresBiometric, segments]);
 
   if (isLoading) {
     return (

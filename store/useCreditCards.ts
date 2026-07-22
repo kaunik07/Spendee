@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { getQueue, materializeRows, pendingBalanceDeltas } from './syncQueue';
+import { subscribeSync } from './syncBus';
 
 export interface CreditCard {
   id: string;
@@ -26,6 +29,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_credit_cards_${userId}`;
+  const cacheKey = `@spendee_credit_cards_cache_${userId}`;
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -39,6 +43,9 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
     return () => { supabase.removeChannel(channel); };
   }, [userId, storageMode, refresh]);
 
+  // Re-materialize when the sync queue changes (e.g. an expense's balance delta).
+  useEffect(() => subscribeSync(refresh), [refresh]);
+
   useEffect(() => { setCards([]); }, [userId, storageMode]);
 
   useEffect(() => {
@@ -51,11 +58,26 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
         setLoading(false);
       });
     } else {
-      supabase.from('credit_cards').select('*').order('created_at', { ascending: true })
-        .then(({ data }) => {
-          setCards((data ?? []).map(rowToCard));
-          setLoading(false);
-        });
+      Promise.all([
+        supabase.from('credit_cards').select('*').order('created_at', { ascending: true }),
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rows = cached ? JSON.parse(cached) : [];
+        } else {
+          rows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rows));
+        }
+        const materialized = materializeRows(rows, ops, 'credit_cards');
+        const deltas = pendingBalanceDeltas(ops, 'balanceCard');
+        setCards(materialized.map((r) => {
+          const c = rowToCard(r);
+          return { ...c, outstandingBalance: c.outstandingBalance + (deltas[c.id] ?? 0) };
+        }));
+        setLoading(false);
+      });
     }
   }, [userId, storageMode, refreshKey]);
 
@@ -66,7 +88,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
   ) => {
     if (storageMode === 'local') {
       const entry: CreditCard = {
-        id: Date.now().toString(),
+        id: Crypto.randomUUID(),
         name: name.trim(),
         outstandingBalance,
         creditLimit,

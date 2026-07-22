@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { getQueue, enqueue, opId, flushAndNotify, materializeRows } from './syncQueue';
+import { subscribeSync } from './syncBus';
 
 export interface Saving {
   id: string;
@@ -19,11 +22,16 @@ function rowToSaving(row: any): Saving {
   };
 }
 
+function savingToRow(s: Saving, userId: string): Record<string, any> {
+  return { id: s.id, user_id: userId, name: s.name, amount: s.amount, note: s.note, date: s.date, created_at: s.createdAt };
+}
+
 export function useSavings(userId: string | null, storageMode: StorageMode | null) {
   const [savings, setSavings] = useState<Saving[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_savings_${userId}`;
+  const cacheKey = `@spendee_savings_cache_${userId}`;
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -37,6 +45,8 @@ export function useSavings(userId: string | null, storageMode: StorageMode | nul
     return () => { supabase.removeChannel(channel); };
   }, [userId, storageMode, refresh]);
 
+  useEffect(() => subscribeSync(refresh), [refresh]);
+
   useEffect(() => { setSavings([]); }, [userId, storageMode]);
 
   useEffect(() => {
@@ -49,26 +59,35 @@ export function useSavings(userId: string | null, storageMode: StorageMode | nul
         setLoading(false);
       });
     } else {
-      supabase.from('savings').select('*').order('created_at', { ascending: false })
-        .then(({ data }) => {
-          setSavings((data ?? []).map(rowToSaving));
-          setLoading(false);
-        });
+      Promise.all([
+        supabase.from('savings').select('*').order('created_at', { ascending: false }),
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rows = cached ? JSON.parse(cached) : [];
+        } else {
+          rows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rows));
+        }
+        setSavings(materializeRows(rows, ops, 'savings').map(rowToSaving));
+        setLoading(false);
+      });
     }
   }, [userId, storageMode, refreshKey]);
 
   const addSaving = useCallback(async (item: Omit<Saving, 'id' | 'createdAt'>) => {
     if (storageMode === 'local') {
-      const entry: Saving = { ...item, id: Date.now().toString(), createdAt: Date.now() };
+      const entry: Saving = { ...item, id: Crypto.randomUUID(), createdAt: Date.now() };
       const updated = [entry, ...savings];
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setSavings(updated);
     } else {
-      const { data } = await supabase.from('savings').insert({
-        user_id: userId, name: item.name, amount: item.amount,
-        note: item.note, date: item.date, created_at: Date.now(),
-      }).select().single();
-      if (data) setSavings((prev) => [rowToSaving(data), ...prev]);
+      const entry: Saving = { ...item, id: Crypto.randomUUID(), createdAt: Date.now() };
+      await enqueue(userId!, { id: opId(), kind: 'insert', table: 'savings', row: savingToRow(entry, userId!) });
+      setSavings((prev) => [entry, ...prev]);
+      flushAndNotify(userId!);
     }
   }, [userId, storageMode, savings, localKey]);
 
@@ -78,20 +97,23 @@ export function useSavings(userId: string | null, storageMode: StorageMode | nul
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setSavings(updated);
     } else {
-      await supabase.from('savings').delete().eq('id', id);
+      await enqueue(userId!, { id: opId(), kind: 'delete', table: 'savings', rowId: id });
       setSavings((prev) => prev.filter((s) => s.id !== id));
+      flushAndNotify(userId!);
     }
-  }, [storageMode, savings, localKey]);
+  }, [storageMode, savings, localKey, userId]);
 
   const resetSavings = useCallback(async () => {
     if (storageMode === 'local') {
       await AsyncStorage.setItem(localKey, JSON.stringify([]));
       setSavings([]);
     } else {
-      await supabase.from('savings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      // Queue an individual delete for each entry so a reset survives offline too.
+      await enqueue(userId!, ...savings.map((s) => ({ id: opId(), kind: 'delete' as const, table: 'savings', rowId: s.id })));
       setSavings([]);
+      flushAndNotify(userId!);
     }
-  }, [storageMode, localKey]);
+  }, [storageMode, localKey, savings, userId]);
 
   const totalSaved = useCallback(
     () => savings.reduce((sum, s) => sum + s.amount, 0),

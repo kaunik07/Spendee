@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { getQueue, materializeRows } from './syncQueue';
+import { subscribeSync } from './syncBus';
 
 export interface CreditCardTransaction {
   id: string;
@@ -66,6 +69,8 @@ export function useCreditCardTransactions(
     return () => { supabase.removeChannel(channel); };
   }, [cardId, storageMode, refresh]);
 
+  useEffect(() => subscribeSync(refresh), [refresh]);
+
   useEffect(() => {
     if (!cardId || !userId || !storageMode) { setLoading(false); return; }
     setLoading(true);
@@ -78,14 +83,27 @@ export function useCreditCardTransactions(
         setLoading(false);
       });
     } else {
-      supabase.from('credit_card_transactions')
-        .select('*')
-        .eq('card_id', cardId)
-        .order('created_at', { ascending: false })
-        .then(({ data }) => {
-          setTransactions((data ?? []).map(rowToTxn));
-          setLoading(false);
-        });
+      const cacheKey = `@spendee_cc_txns_cache_${userId}_${cardId}`;
+      Promise.all([
+        supabase.from('credit_card_transactions').select('*').eq('card_id', cardId).order('created_at', { ascending: false }),
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rows = cached ? JSON.parse(cached) : [];
+        } else {
+          rows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rows));
+        }
+        const relevant = ops.filter((o) =>
+          (o.kind === 'insert' && o.table === 'credit_card_transactions' && o.row.card_id === cardId) ||
+          (o.kind === 'delete' && o.table === 'credit_card_transactions')
+        );
+        const merged = materializeRows(rows, relevant, 'credit_card_transactions');
+        setTransactions(merged.map(rowToTxn).sort((a, b) => b.createdAt - a.createdAt));
+        setLoading(false);
+      });
     }
   }, [cardId, userId, storageMode, refreshKey, externalVersion]);
 
@@ -101,7 +119,7 @@ export function useCreditCardTransactions(
 
     if (storageMode === 'local') {
       const txn: CreditCardTransaction = {
-        id: Date.now().toString(),
+        id: Crypto.randomUUID(),
         cardId,
         type,
         amount,
@@ -166,7 +184,7 @@ export async function addCCTransactionDirect(
   data: Omit<CreditCardTransaction, 'id' | 'createdAt'>,
 ): Promise<string | null> {
   if (storageMode === 'local') {
-    const id = Date.now().toString();
+    const id = Crypto.randomUUID();
     const txn: CreditCardTransaction = { ...data, id, createdAt: Date.now() };
     const all = await localLoadAll(userId);
     await localSaveAll(userId, [txn, ...all]);

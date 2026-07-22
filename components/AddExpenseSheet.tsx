@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Crypto from 'expo-crypto';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import {
@@ -26,6 +27,7 @@ import { useAuthContext } from '@/store/AuthContext';
 import { addAccountTransactionDirect } from '@/store/useAccountTransactions';
 import { addCCTransactionDirect } from '@/store/useCreditCardTransactions';
 import { useDefaultPayment } from '@/store/useDefaultPayment';
+import { SyncOp } from '@/store/syncQueue';
 
 const C = {
   bg:        '#1C1B23',
@@ -131,38 +133,53 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   };
 
   const handleSave = async () => {
-    if (!canSave) return;
+    if (!canSave || !user?.id) return;
     const parsedAmount = parseFloat(amount);
     let linkedTransactionId: string | null = null;
+    const bundle: SyncOp[] = [];
 
     const txnNote = `${cat.label} - ${name.trim()}`;
 
-    if (paymentType === 'bank_account' && paymentSourceId && user?.id) {
-      const account = accounts.find((a) => a.id === paymentSourceId);
-      if (account) {
-        linkedTransactionId = await addAccountTransactionDirect(user.id, storageMode, {
-          accountId: paymentSourceId,
-          type:      'withdrawal',
-          amount:    parsedAmount,
-          note:      txnNote,
-          date,
+    // Online mode: build the payment-source ops (transaction + balance delta)
+    // as a bundle queued atomically with the expense — offline-safe. Local
+    // (guest) mode writes directly to on-device storage as before.
+    if (paymentType === 'bank_account' && paymentSourceId) {
+      if (storageMode === 'online') {
+        const txnId = Crypto.randomUUID();
+        linkedTransactionId = txnId;
+        bundle.push({
+          id: Crypto.randomUUID(), kind: 'insert', table: 'account_transactions',
+          row: { id: txnId, account_id: paymentSourceId, user_id: user.id, type: 'withdrawal', amount: parsedAmount, note: txnNote, date, created_at: Date.now() },
         });
-        await updateAccount(paymentSourceId, account.name, account.balance - parsedAmount);
+        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceAccount', accountId: paymentSourceId, delta: -parsedAmount });
+      } else {
+        const account = accounts.find((a) => a.id === paymentSourceId);
+        if (account) {
+          linkedTransactionId = await addAccountTransactionDirect(user.id, storageMode, {
+            accountId: paymentSourceId, type: 'withdrawal', amount: parsedAmount, note: txnNote, date,
+          });
+          await updateAccount(paymentSourceId, account.name, account.balance - parsedAmount);
+        }
       }
-    } else if (paymentType === 'credit_card' && paymentSourceId && user?.id) {
-      const card = cards.find((c) => c.id === paymentSourceId);
-      if (card) {
-        linkedTransactionId = await addCCTransactionDirect(user.id, storageMode, {
-          cardId:                  paymentSourceId,
-          type:                    'charge',
-          amount:                  parsedAmount,
-          note:                    txnNote,
-          date,
-          bankAccountId:           null,
-          linkedBankTransactionId: null,
+    } else if (paymentType === 'credit_card' && paymentSourceId) {
+      if (storageMode === 'online') {
+        const txnId = Crypto.randomUUID();
+        linkedTransactionId = txnId;
+        bundle.push({
+          id: Crypto.randomUUID(), kind: 'insert', table: 'credit_card_transactions',
+          row: { id: txnId, card_id: paymentSourceId, user_id: user.id, type: 'charge', amount: parsedAmount, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() },
         });
-        await updateCard(paymentSourceId, card.name, card.outstandingBalance + parsedAmount, card.creditLimit);
-        bumpCCTxnVersion();
+        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceCard', cardId: paymentSourceId, delta: parsedAmount });
+      } else {
+        const card = cards.find((c) => c.id === paymentSourceId);
+        if (card) {
+          linkedTransactionId = await addCCTransactionDirect(user.id, storageMode, {
+            cardId: paymentSourceId, type: 'charge', amount: parsedAmount, note: txnNote, date,
+            bankAccountId: null, linkedBankTransactionId: null,
+          });
+          await updateCard(paymentSourceId, card.name, card.outstandingBalance + parsedAmount, card.creditLimit);
+          bumpCCTxnVersion();
+        }
       }
     }
 
@@ -182,7 +199,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
       paymentType,
       paymentSourceId:     paymentType ? paymentSourceId : null,
       linkedTransactionId,
-    });
+    }, bundle);
 
     setAmount('');
     setName('');

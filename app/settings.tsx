@@ -18,7 +18,7 @@ import { Colors } from '@/constants/theme';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, toggleBiometric, logout } = useAuthContext();
+  const { user, isGuest, toggleBiometric, logout } = useAuthContext();
 
   const [biometricType, setBiometricType]           = useState<'face' | 'fingerprint' | null>(null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
@@ -75,7 +75,8 @@ export default function SettingsScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
 
-        {/* Security */}
+        {/* Security — only for real accounts (guests have no lock) */}
+        {!isGuest && (
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Security</Text>
 
@@ -118,42 +119,77 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        )}
 
         {/* Account */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Account</Text>
 
-          <TouchableOpacity style={styles.settingRow} onPress={handleLogout} activeOpacity={0.75}>
-            <View style={styles.settingLeft}>
-              <View style={[styles.settingIcon, { backgroundColor: Colors.danger + '18' }]}>
-                <MaterialCommunityIcons name="logout" size={20} color={Colors.danger} />
-              </View>
-              <View>
-                <Text style={[styles.settingTitle, { color: Colors.danger }]}>Log Out</Text>
-                <Text style={styles.settingSubtitle}>Sign out of your account</Text>
-              </View>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
-          </TouchableOpacity>
+          {isGuest ? (
+            <>
+              <TouchableOpacity style={styles.settingRow} onPress={() => router.push('/signup')} activeOpacity={0.75}>
+                <View style={styles.settingLeft}>
+                  <View style={[styles.settingIcon, { backgroundColor: Colors.primaryMuted }]}>
+                    <MaterialCommunityIcons name="cloud-upload-outline" size={20} color={Colors.primary} />
+                  </View>
+                  <View>
+                    <Text style={styles.settingTitle}>Back up to cloud</Text>
+                    <Text style={styles.settingSubtitle}>Create an account to sync across devices</Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
+              </TouchableOpacity>
 
-          <View style={{ height: 10 }} />
+              <View style={{ height: 10 }} />
 
-          <TouchableOpacity
-            style={styles.deleteRow}
-            onPress={() => router.push('/delete-account')}
-            activeOpacity={0.75}
-          >
-            <View style={styles.settingLeft}>
-              <View style={[styles.settingIcon, { backgroundColor: Colors.danger + '18' }]}>
-                <MaterialCommunityIcons name="delete-outline" size={20} color={Colors.danger} />
-              </View>
-              <View>
-                <Text style={[styles.settingTitle, { color: Colors.danger }]}>Delete Account</Text>
-                <Text style={styles.settingSubtitle}>Permanently remove all data</Text>
-              </View>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.danger} />
-          </TouchableOpacity>
+              <TouchableOpacity style={styles.settingRow} onPress={() => router.push('/login')} activeOpacity={0.75}>
+                <View style={styles.settingLeft}>
+                  <View style={[styles.settingIcon, { backgroundColor: Colors.surfaceContainer }]}>
+                    <MaterialCommunityIcons name="login" size={20} color={Colors.textSecondary} />
+                  </View>
+                  <View>
+                    <Text style={styles.settingTitle}>Log in</Text>
+                    <Text style={styles.settingSubtitle}>Already have an account?</Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.settingRow} onPress={handleLogout} activeOpacity={0.75}>
+                <View style={styles.settingLeft}>
+                  <View style={[styles.settingIcon, { backgroundColor: Colors.danger + '18' }]}>
+                    <MaterialCommunityIcons name="logout" size={20} color={Colors.danger} />
+                  </View>
+                  <View>
+                    <Text style={[styles.settingTitle, { color: Colors.danger }]}>Log Out</Text>
+                    <Text style={styles.settingSubtitle}>Sign out of your account</Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
+              </TouchableOpacity>
+
+              <View style={{ height: 10 }} />
+
+              <TouchableOpacity
+                style={styles.deleteRow}
+                onPress={() => router.push('/delete-account')}
+                activeOpacity={0.75}
+              >
+                <View style={styles.settingLeft}>
+                  <View style={[styles.settingIcon, { backgroundColor: Colors.danger + '18' }]}>
+                    <MaterialCommunityIcons name="delete-outline" size={20} color={Colors.danger} />
+                  </View>
+                  <View>
+                    <Text style={[styles.settingTitle, { color: Colors.danger }]}>Delete Account</Text>
+                    <Text style={styles.settingSubtitle}>Permanently remove all data</Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.danger} />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
       </ScrollView>

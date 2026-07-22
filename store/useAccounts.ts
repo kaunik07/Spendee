@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { getQueue, materializeRows, pendingBalanceDeltas } from './syncQueue';
+import { subscribeSync } from './syncBus';
 
 export interface BankAccount {
   id: string;
@@ -24,6 +27,7 @@ export function useAccounts(userId: string | null, storageMode: StorageMode | nu
   const [loading, setLoading]   = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_accounts_${userId}`;
+  const cacheKey = `@spendee_accounts_cache_${userId}`;
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -37,6 +41,9 @@ export function useAccounts(userId: string | null, storageMode: StorageMode | nu
     return () => { supabase.removeChannel(channel); };
   }, [userId, storageMode, refresh]);
 
+  // Re-materialize when the sync queue changes (e.g. an expense's balance delta).
+  useEffect(() => subscribeSync(refresh), [refresh]);
+
   useEffect(() => { setAccounts([]); }, [userId, storageMode]);
 
   useEffect(() => {
@@ -49,17 +56,34 @@ export function useAccounts(userId: string | null, storageMode: StorageMode | nu
         setLoading(false);
       });
     } else {
-      supabase.from('bank_accounts').select('*').order('created_at', { ascending: true })
-        .then(({ data }) => {
-          setAccounts((data ?? []).map(rowToAccount));
-          setLoading(false);
-        });
+      // Fetch (or use the offline cache), then overlay any pending balance
+      // deltas from the sync queue so offline deductions show and converge.
+      Promise.all([
+        supabase.from('bank_accounts').select('*').order('created_at', { ascending: true }),
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rows = cached ? JSON.parse(cached) : [];
+        } else {
+          rows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rows));
+        }
+        const materialized = materializeRows(rows, ops, 'bank_accounts');
+        const deltas = pendingBalanceDeltas(ops, 'balanceAccount');
+        setAccounts(materialized.map((r) => {
+          const a = rowToAccount(r);
+          return { ...a, balance: a.balance + (deltas[a.id] ?? 0) };
+        }));
+        setLoading(false);
+      });
     }
   }, [userId, storageMode, refreshKey]);
 
   const addAccount = useCallback(async (name: string, balance: number) => {
     if (storageMode === 'local') {
-      const entry: BankAccount = { id: Date.now().toString(), name: name.trim(), balance, createdAt: Date.now() };
+      const entry: BankAccount = { id: Crypto.randomUUID(), name: name.trim(), balance, createdAt: Date.now() };
       const updated = [...accounts, entry];
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setAccounts(updated);

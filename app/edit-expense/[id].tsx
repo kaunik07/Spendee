@@ -16,9 +16,11 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Crypto from 'expo-crypto';
 import CategoryPickerSheet from '@/components/CategoryPickerSheet';
 import SubcategorySection from '@/components/SubcategorySection';
 import { LEARNED_DETAIL_KEYS } from '@/constants/subcategories';
+import { SyncOp } from '@/store/syncQueue';
 import { Colors, getCategoryById } from '@/constants/theme';
 import { useAccountsContext } from '@/store/AccountsContext';
 import { useAuthContext } from '@/store/AuthContext';
@@ -129,68 +131,71 @@ export default function EditExpenseScreen() {
     const txnNote = `${cat.label} - ${name.trim()}`;
 
     let newLinkedTxnId: string | null = null;
+    const bundle: SyncOp[] = [];
+    const opId = () => Crypto.randomUUID();
 
-    const paymentUnchanged =
-      newPaymentType === oldPaymentType && newSourceId === oldSourceId;
-
-    if (paymentUnchanged && newPaymentType !== null && oldLinkedTxnId) {
-      // Same payment source — just update amount if it changed
-      const diff = newAmount - oldAmount;
-      if (diff !== 0) {
+    if (storageMode === 'online') {
+      // Reverse the old payment, then apply the new one — all queued as
+      // balance deltas + transaction ops so it's offline-safe & idempotent.
+      if (oldPaymentType === 'bank_account' && oldSourceId) {
+        bundle.push({ id: opId(), kind: 'balanceAccount', accountId: oldSourceId, delta: oldAmount });
+        if (oldLinkedTxnId) bundle.push({ id: opId(), kind: 'delete', table: 'account_transactions', rowId: oldLinkedTxnId });
+      } else if (oldPaymentType === 'credit_card' && oldSourceId) {
+        bundle.push({ id: opId(), kind: 'balanceCard', cardId: oldSourceId, delta: -oldAmount });
+        if (oldLinkedTxnId) bundle.push({ id: opId(), kind: 'delete', table: 'credit_card_transactions', rowId: oldLinkedTxnId });
+      }
+      if (newPaymentType === 'bank_account' && newSourceId) {
+        newLinkedTxnId = Crypto.randomUUID();
+        bundle.push({ id: opId(), kind: 'insert', table: 'account_transactions', row: { id: newLinkedTxnId, account_id: newSourceId, user_id: user.id, type: 'withdrawal', amount: newAmount, note: txnNote, date, created_at: Date.now() } });
+        bundle.push({ id: opId(), kind: 'balanceAccount', accountId: newSourceId, delta: -newAmount });
+      } else if (newPaymentType === 'credit_card' && newSourceId) {
+        newLinkedTxnId = Crypto.randomUUID();
+        bundle.push({ id: opId(), kind: 'insert', table: 'credit_card_transactions', row: { id: newLinkedTxnId, card_id: newSourceId, user_id: user.id, type: 'charge', amount: newAmount, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() } });
+        bundle.push({ id: opId(), kind: 'balanceCard', cardId: newSourceId, delta: newAmount });
+      }
+    } else {
+      // Local (guest) mode — direct on-device writes.
+      const paymentUnchanged = newPaymentType === oldPaymentType && newSourceId === oldSourceId;
+      if (paymentUnchanged && newPaymentType !== null && oldLinkedTxnId) {
+        const diff = newAmount - oldAmount;
+        if (diff !== 0) {
+          if (newPaymentType === 'bank_account' && newSourceId) {
+            const acct = accounts.find((a) => a.id === newSourceId);
+            if (acct) await updateAccount(acct.id, acct.name, acct.balance - diff);
+            await updateAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+          } else if (newPaymentType === 'credit_card' && newSourceId) {
+            const card = cards.find((c) => c.id === newSourceId);
+            if (card) await updateCard(card.id, card.name, card.outstandingBalance + diff, card.creditLimit);
+            await updateCCTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+          }
+        }
+        newLinkedTxnId = oldLinkedTxnId;
+      } else {
+        if (oldPaymentType === 'bank_account' && oldSourceId) {
+          const acct = accounts.find((a) => a.id === oldSourceId);
+          if (acct) await updateAccount(acct.id, acct.name, acct.balance + oldAmount);
+          if (oldLinkedTxnId) await deleteAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId);
+        } else if (oldPaymentType === 'credit_card' && oldSourceId) {
+          const card = cards.find((c) => c.id === oldSourceId);
+          if (card) await updateCard(card.id, card.name, card.outstandingBalance - oldAmount, card.creditLimit);
+          if (oldLinkedTxnId) await deleteCCTransactionDirect(user.id, storageMode, oldLinkedTxnId);
+        }
         if (newPaymentType === 'bank_account' && newSourceId) {
           const acct = accounts.find((a) => a.id === newSourceId);
-          if (acct) await updateAccount(acct.id, acct.name, acct.balance - diff);
-          await updateAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+          if (acct) {
+            newLinkedTxnId = await addAccountTransactionDirect(user.id, storageMode, { accountId: newSourceId, type: 'withdrawal', amount: newAmount, note: txnNote, date });
+            await updateAccount(acct.id, acct.name, acct.balance - newAmount);
+          }
         } else if (newPaymentType === 'credit_card' && newSourceId) {
           const card = cards.find((c) => c.id === newSourceId);
-          if (card) await updateCard(card.id, card.name, card.outstandingBalance + diff, card.creditLimit);
-          await updateCCTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+          if (card) {
+            newLinkedTxnId = await addCCTransactionDirect(user.id, storageMode, { cardId: newSourceId, type: 'charge', amount: newAmount, note: txnNote, date, bankAccountId: null, linkedBankTransactionId: null });
+            await updateCard(card.id, card.name, card.outstandingBalance + newAmount, card.creditLimit);
+          }
         }
       }
-      newLinkedTxnId = oldLinkedTxnId;
-    } else {
-      // Reverse old payment
-      if (oldPaymentType === 'bank_account' && oldSourceId) {
-        const acct = accounts.find((a) => a.id === oldSourceId);
-        if (acct) await updateAccount(acct.id, acct.name, acct.balance + oldAmount);
-        if (oldLinkedTxnId) await deleteAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId);
-      } else if (oldPaymentType === 'credit_card' && oldSourceId) {
-        const card = cards.find((c) => c.id === oldSourceId);
-        if (card) await updateCard(card.id, card.name, card.outstandingBalance - oldAmount, card.creditLimit);
-        if (oldLinkedTxnId) await deleteCCTransactionDirect(user.id, storageMode, oldLinkedTxnId);
-      }
-
-      // Apply new payment
-      if (newPaymentType === 'bank_account' && newSourceId) {
-        const acct = accounts.find((a) => a.id === newSourceId);
-        if (acct) {
-          newLinkedTxnId = await addAccountTransactionDirect(user.id, storageMode, {
-            accountId: newSourceId,
-            type:      'withdrawal',
-            amount:    newAmount,
-            note:      txnNote,
-            date,
-          });
-          await updateAccount(acct.id, acct.name, acct.balance - newAmount);
-        }
-      } else if (newPaymentType === 'credit_card' && newSourceId) {
-        const card = cards.find((c) => c.id === newSourceId);
-        if (card) {
-          newLinkedTxnId = await addCCTransactionDirect(user.id, storageMode, {
-            cardId:                  newSourceId,
-            type:                    'charge',
-            amount:                  newAmount,
-            note:                    txnNote,
-            date,
-            bankAccountId:           null,
-            linkedBankTransactionId: null,
-          });
-          await updateCard(card.id, card.name, card.outstandingBalance + newAmount, card.creditLimit);
-        }
-      }
+      if (newPaymentType === 'credit_card' || oldPaymentType === 'credit_card') bumpCCTxnVersion();
     }
-
-    if (newPaymentType === 'credit_card' || oldPaymentType === 'credit_card') bumpCCTxnVersion();
 
     const cleanedDetails = Object.fromEntries(
       Object.entries(details).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
@@ -207,7 +212,7 @@ export default function EditExpenseScreen() {
       paymentType:        newPaymentType,
       paymentSourceId:    newPaymentType ? newSourceId : null,
       linkedTransactionId: newLinkedTxnId,
-    });
+    }, bundle);
 
     router.back();
   };

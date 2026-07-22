@@ -26,14 +26,14 @@ export default function HomeScreen() {
   const sheetRef = useRef<BottomSheet>(null);
   const router = useRouter();
   const { user } = useAuthContext();
-  const { expenses, refresh: refreshExpenses, pendingCount, syncing, flushOutbox } = useExpenseContext();
+  const { expenses, refresh: refreshExpenses, pendingCount, syncing, flush } = useExpenseContext();
   const { deleteExpenseWithReversal }          = useExpenseActions();
 
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = async () => {
     setRefreshing(true);
     refreshExpenses();
-    flushOutbox();
+    flush();
     setTimeout(() => setRefreshing(false), 800);
   };
 

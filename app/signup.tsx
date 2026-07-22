@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthContext } from '@/store/AuthContext';
-import { StorageMode } from '@/store/storageMode';
 import { Colors } from '@/constants/theme';
 
 export default function SignupScreen() {
@@ -27,7 +26,6 @@ export default function SignupScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword]       = useState(false);
   const [showConfirm, setShowConfirm]         = useState(false);
-  const [storageMode, setStorageMode]         = useState<StorageMode>('local');
   const [loading, setLoading]                 = useState(false);
 
   const handleSignUp = async () => {
@@ -36,7 +34,7 @@ export default function SignupScreen() {
       return;
     }
     setLoading(true);
-    const { error } = await signUp(username, password, storageMode);
+    const { error } = await signUp(username, password);
     setLoading(false);
     if (error) Alert.alert('Sign Up Failed', error);
   };
@@ -51,48 +49,17 @@ export default function SignupScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
 
-          {/* Header */}
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={10}>
-            <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.text} />
+          {/* Close → back to the app (guest home). iOS has no hardware back. */}
+          <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.backBtn} hitSlop={10}>
+            <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
           </TouchableOpacity>
 
           <View style={styles.headerArea}>
-            <Text style={styles.title}>Create account</Text>
-            <Text style={styles.subtitle}>Join Spendee and start tracking</Text>
-          </View>
-
-          {/* Storage mode selector */}
-          <Text style={styles.sectionLabel}>Where should your data live?</Text>
-          <View style={styles.modeRow}>
-            <TouchableOpacity
-              style={[styles.modeCard, storageMode === 'local' && styles.modeCardActive]}
-              onPress={() => setStorageMode('local')}
-              activeOpacity={0.8}>
-              <MaterialCommunityIcons
-                name="shield-lock-outline"
-                size={24}
-                color={storageMode === 'local' ? Colors.primary : Colors.outline}
-              />
-              <Text style={[styles.modeTitle, storageMode === 'local' && styles.modeTitleActive]}>
-                Keep it Local
-              </Text>
-              <Text style={styles.modeDesc}>Stored only on this device. Private, no cloud.</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.modeCard, storageMode === 'online' && styles.modeCardActive]}
-              onPress={() => setStorageMode('online')}
-              activeOpacity={0.8}>
-              <MaterialCommunityIcons
-                name="cloud-outline"
-                size={24}
-                color={storageMode === 'online' ? Colors.primary : Colors.outline}
-              />
-              <Text style={[styles.modeTitle, storageMode === 'online' && styles.modeTitleActive]}>
-                Sync Online
-              </Text>
-              <Text style={styles.modeDesc}>Backed up to the cloud. Sync across devices.</Text>
-            </TouchableOpacity>
+            <Text style={styles.title}>Back up to the cloud</Text>
+            <Text style={styles.subtitle}>
+              Create an account to sync your data across devices. Everything you&apos;ve
+              added so far comes with you.
+            </Text>
           </View>
 
           {/* Form */}
@@ -165,7 +132,7 @@ export default function SignupScreen() {
           {/* Log in link */}
           <View style={styles.loginRow}>
             <Text style={styles.loginText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity onPress={() => router.replace('/login')}>
               <Text style={styles.loginLink}>Log in</Text>
             </TouchableOpacity>
           </View>

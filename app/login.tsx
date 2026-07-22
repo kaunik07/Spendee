@@ -1,4 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -57,6 +59,13 @@ export default function LoginScreen() {
 
   const showBiometric = lastUser?.biometricEnabled && biometricType !== null;
 
+  // Build-info diagnostics
+  const backendRef   = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'MISSING').replace('https://', '').split('.')[0];
+  const buildProfile = (Constants.expoConfig?.extra?.buildProfile as string) ?? 'local';
+  const gitSha       = (Constants.expoConfig?.extra?.gitSha as string) ?? 'local';
+  const appVersion   = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '?';
+  const buildNumber  = Application.nativeBuildVersion ?? 'dev';
+
   const handleForgetDevice = () => {
     Alert.alert(
       'Reset This Device?',
@@ -83,6 +92,14 @@ export default function LoginScreen() {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
+
+          {/* Close → back to the app (guest home). iOS has no hardware back. */}
+          <TouchableOpacity
+            onPress={() => router.replace('/(tabs)')}
+            style={styles.closeBtn}
+            hitSlop={12}>
+            <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
+          </TouchableOpacity>
 
           {/* Logo */}
           <View style={styles.logoArea}>
@@ -167,14 +184,16 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Backend indicator — shows which Supabase project + mode this bundle uses.
-              Long-press to reset a stuck local session (see forgetDevice). */}
+          {/* Build-info line — answers "which backend + which build is this?" at a
+              glance, on any device, without a rebuild. Long-press to reset a stuck
+              session (see forgetDevice). */}
           <Pressable onLongPress={handleForgetDevice} hitSlop={10}>
             <Text style={styles.backendTag}>
-              backend: {(process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'MISSING').replace('https://', '').split('.')[0]}
-              {storageMode ? ` · mode: ${storageMode}` : ''}
+              backend: {backendRef} · {buildProfile}{storageMode ? ` · ${storageMode}` : ''}
             </Text>
-            <Text style={styles.backendHint}>Long-press to reset this device</Text>
+            <Text style={styles.backendHint}>
+              v{appVersion} ({buildNumber}) · {gitSha} · long-press to reset
+            </Text>
           </Pressable>
 
         </ScrollView>
@@ -186,6 +205,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 },
+  closeBtn: { alignSelf: 'flex-start', padding: 2, marginBottom: 8 },
   backendTag: {
     color: Colors.textMuted,
     fontSize: 10,

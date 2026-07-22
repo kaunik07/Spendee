@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
-import { OutboxExpense, getOutbox, saveOutbox, enqueueExpense, removeFromOutbox } from './outbox';
+import {
+  SyncOp, getQueue, enqueue, flushQueue,
+  materializeRows, pendingRowIds,
+} from './syncQueue';
+import { subscribeSync, notifySync } from './syncBus';
 
 export interface Expense {
   id: string;
@@ -20,13 +24,7 @@ export interface Expense {
   paymentType: 'bank_account' | 'credit_card' | null;
   paymentSourceId: string | null;       // account id or card id
   linkedTransactionId: string | null;   // transaction created in that account/card
-  pending?: boolean;                     // online mode: added offline, not yet synced to cloud
-}
-
-// The DB row shape the outbox stores is identical to what we insert — so
-// the same rowToExpense mapper turns an outbox item into a (pending) Expense.
-function outboxToExpense(o: OutboxExpense): Expense {
-  return { ...rowToExpense(o), pending: true };
+  pending?: boolean;                     // online mode: queued offline, not yet synced
 }
 
 function rowToExpense(row: any): Expense {
@@ -46,12 +44,34 @@ function rowToExpense(row: any): Expense {
   };
 }
 
+// Full DB row for an expense (used for queued insert/update ops).
+export function expenseToRow(e: Expense, userId: string): Record<string, any> {
+  return {
+    id:                    e.id,
+    user_id:               userId,
+    name:                  e.name,
+    amount:                e.amount,
+    category:              e.category,
+    note:                  e.note,
+    date:                  e.date,
+    created_at:            e.createdAt,
+    subcategory:           e.subcategory ?? null,
+    details:               e.details ?? null,
+    payment_type:          e.paymentType ?? null,
+    payment_source_id:     e.paymentSourceId ?? null,
+    linked_transaction_id: e.linkedTransactionId ?? null,
+  };
+}
+
+const opId = () => Crypto.randomUUID();
+
 export function useExpenses(userId: string | null, storageMode: StorageMode | null) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_expenses_${userId}`;
+  const cacheKey = `@spendee_expenses_cache_${userId}`;
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -64,6 +84,9 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId, storageMode, refresh]);
+
+  // Re-materialize when any other store flushes/changes the queue.
+  useEffect(() => subscribeSync(refresh), [refresh]);
 
   // Clear state only when user/mode changes, not on every refresh
   useEffect(() => { setExpenses([]); }, [userId, storageMode]);
@@ -78,150 +101,104 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
         setLoading(false);
       });
     } else {
-      // Fetch cloud rows and merge in any not-yet-synced offline adds so
-      // pending expenses stay visible until they reach the server.
+      // Fetch cloud rows (or fall back to the offline cache), then overlay the
+      // pending sync-queue ops so offline adds/edits/deletes are reflected.
       Promise.all([
         supabase.from('expenses').select('*').order('created_at', { ascending: false }),
-        getOutbox(userId),
-      ]).then(([res, outbox]) => {
-        if (res.error) console.warn('[useExpenses] fetch error:', res.error.message);
-        const serverRows = (res.data ?? []).map(rowToExpense);
-        const serverIds  = new Set(serverRows.map((e) => e.id));
-        const pendingRows = outbox.filter((o) => !serverIds.has(o.id)).map(outboxToExpense);
-        setExpenses([...pendingRows, ...serverRows]);
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rawRows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rawRows = cached ? JSON.parse(cached) : [];
+        } else {
+          rawRows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rawRows));
+        }
+        const merged  = materializeRows(rawRows, ops, 'expenses');
+        const pending = pendingRowIds(ops, 'expenses');
+        setExpenses(merged.map((r) => ({ ...rowToExpense(r), pending: pending.has(r.id) })));
         setLoading(false);
       });
     }
   }, [userId, storageMode, refreshKey]);
 
-  // Push queued offline expenses to the cloud. Idempotent: a duplicate-key
-  // error means the row already landed, so we treat it as synced. Any other
-  // error (offline) stops the run — it retries on the next trigger.
-  const flushOutbox = useCallback(async () => {
+  // Drain the sync queue. Idempotent replay; stops on the first failure
+  // (offline) and retries on the next trigger. Notifies other stores so their
+  // balances/lists re-materialize too.
+  const flush = useCallback(async () => {
     if (storageMode !== 'online' || !userId) return;
-    const items = await getOutbox(userId);
-    if (items.length === 0) return;
-
+    const q = await getQueue(userId);
+    if (q.length === 0) return;
     setSyncing(true);
-    let changed = false;
-    for (const it of items) {
-      const { error } = await supabase.from('expenses').insert(it);
-      if (!error || (error as any).code === '23505') {
-        await removeFromOutbox(userId, it.id);
-        changed = true;
-      } else {
-        break; // network/server error — keep the rest queued, retry later
-      }
-    }
+    await flushQueue(userId);
     setSyncing(false);
-    if (changed) refresh();
-  }, [userId, storageMode, refresh]);
+    notifySync();
+  }, [userId, storageMode]);
 
-  // Flush on mount, whenever the app returns to the foreground, and on a
-  // gentle interval — no native connectivity module needed.
+  // Flush on mount, on foreground, and on a gentle interval.
   useEffect(() => {
     if (storageMode !== 'online' || !userId) return;
-    flushOutbox();
-    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') flushOutbox(); });
-    const interval = setInterval(flushOutbox, 25000);
+    flush();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') flush(); });
+    const interval = setInterval(flush, 25000);
     return () => { sub.remove(); clearInterval(interval); };
-  }, [userId, storageMode, flushOutbox]);
+  }, [userId, storageMode, flush]);
 
+  // `bundle` carries the linked payment-source ops (transaction insert +
+  // balance delta) so an offline payment-linked expense syncs as one unit.
   const addExpense = useCallback(
-    async (item: Omit<Expense, 'id' | 'createdAt'>) => {
+    async (item: Omit<Expense, 'id' | 'createdAt'>, bundle: SyncOp[] = []) => {
       if (storageMode === 'local') {
-        const newExpense: Expense = { ...item, id: Date.now().toString(), createdAt: Date.now() };
+        const newExpense: Expense = { ...item, id: Crypto.randomUUID(), createdAt: Date.now() };
         const updated = [newExpense, ...expenses];
         await AsyncStorage.setItem(localKey, JSON.stringify(updated));
         setExpenses(updated);
       } else {
-        // Online mode is offline-tolerant: write to the outbox with a
-        // client-generated id, show it immediately, then try to sync.
-        const row: OutboxExpense = {
-          id:                    Crypto.randomUUID(),
-          user_id:               userId!,
-          name:                  item.name,
-          amount:                item.amount,
-          category:              item.category,
-          note:                  item.note,
-          date:                  item.date,
-          created_at:            Date.now(),
-          subcategory:           item.subcategory ?? null,
-          details:               item.details ?? null,
-          payment_type:          item.paymentType ?? null,
-          payment_source_id:     item.paymentSourceId ?? null,
-          linked_transaction_id: item.linkedTransactionId ?? null,
-        };
-        await enqueueExpense(userId!, row);
-        setExpenses((prev) => [outboxToExpense(row), ...prev]);
-        flushOutbox(); // fire-and-forget; stays queued if offline
+        const expense: Expense = { ...item, id: Crypto.randomUUID(), createdAt: Date.now() };
+        const row = expenseToRow(expense, userId!);
+        await enqueue(userId!, { id: opId(), kind: 'insert', table: 'expenses', row }, ...bundle);
+        setExpenses((prev) => [{ ...expense, pending: true }, ...prev]);
+        if (bundle.length > 0) notifySync(); // let accounts/cards reflect the balance delta
+        flush();
       }
     },
-    [userId, storageMode, expenses, localKey, flushOutbox]
+    [userId, storageMode, expenses, localKey, flush]
   );
 
   const updateExpense = useCallback(
-    async (id: string, updates: Partial<Omit<Expense, 'id' | 'createdAt'>>) => {
+    async (id: string, updates: Partial<Omit<Expense, 'id' | 'createdAt'>>, bundle: SyncOp[] = []) => {
       if (storageMode === 'local') {
         const updated = expenses.map((e) => (e.id === id ? { ...e, ...updates } : e));
         await AsyncStorage.setItem(localKey, JSON.stringify(updated));
         setExpenses(updated);
       } else {
-        // If the expense is still queued offline, edit the queued payload
-        // instead of updating a row the server doesn't have yet.
-        const outbox = await getOutbox(userId!);
-        const idx = outbox.findIndex((o) => o.id === id);
-        if (idx !== -1) {
-          const o = outbox[idx];
-          if (updates.name            !== undefined) o.name                  = updates.name;
-          if (updates.amount          !== undefined) o.amount                = updates.amount;
-          if (updates.category        !== undefined) o.category              = updates.category;
-          if (updates.note            !== undefined) o.note                  = updates.note;
-          if (updates.date            !== undefined) o.date                  = updates.date;
-          if (updates.subcategory     !== undefined) o.subcategory           = updates.subcategory ?? null;
-          if (updates.details         !== undefined) o.details               = updates.details ?? null;
-          if (updates.paymentType     !== undefined) o.payment_type          = updates.paymentType;
-          if (updates.paymentSourceId !== undefined) o.payment_source_id     = updates.paymentSourceId;
-          if (updates.linkedTransactionId !== undefined) o.linked_transaction_id = updates.linkedTransactionId;
-          await saveOutbox(userId!, outbox);
-          setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...updates } : e)));
-          return;
-        }
-        const dbUpdates: Record<string, any> = {};
-        if (updates.name              !== undefined) dbUpdates.name               = updates.name;
-        if (updates.amount            !== undefined) dbUpdates.amount             = updates.amount;
-        if (updates.category          !== undefined) dbUpdates.category           = updates.category;
-        if (updates.note              !== undefined) dbUpdates.note               = updates.note;
-        if (updates.date              !== undefined) dbUpdates.date               = updates.date;
-        if (updates.subcategory       !== undefined) dbUpdates.subcategory        = updates.subcategory ?? null;
-        if (updates.details           !== undefined) dbUpdates.details            = updates.details ?? null;
-        if (updates.paymentType       !== undefined) dbUpdates.payment_type       = updates.paymentType;
-        if (updates.paymentSourceId   !== undefined) dbUpdates.payment_source_id  = updates.paymentSourceId;
-        if (updates.linkedTransactionId !== undefined) dbUpdates.linked_transaction_id = updates.linkedTransactionId;
-        await supabase.from('expenses').update(dbUpdates).eq('id', id);
-        setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...updates } : e)));
+        const current = expenses.find((e) => e.id === id);
+        if (!current) return;
+        const merged = { ...current, ...updates };
+        const row = expenseToRow(merged, userId!);
+        // Full-row overwrite = last-write-wins across devices.
+        await enqueue(userId!, { id: opId(), kind: 'update', table: 'expenses', rowId: id, row }, ...bundle);
+        setExpenses((prev) => prev.map((e) => (e.id === id ? merged : e)));
+        if (bundle.length > 0) notifySync();
+        flush();
       }
     },
-    [storageMode, expenses, localKey, userId]
+    [userId, storageMode, expenses, localKey, flush]
   );
 
-  const deleteExpense = useCallback(async (id: string) => {
+  const deleteExpense = useCallback(async (id: string, bundle: SyncOp[] = []) => {
     if (storageMode === 'local') {
       const updated = expenses.filter((e) => e.id !== id);
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setExpenses(updated);
     } else {
-      // A still-queued offline add is deleted by dropping it from the outbox
-      // (there's no server row to delete yet).
-      const outbox = await getOutbox(userId!);
-      if (outbox.some((o) => o.id === id)) {
-        await removeFromOutbox(userId!, id);
-      } else {
-        await supabase.from('expenses').delete().eq('id', id);
-      }
+      await enqueue(userId!, { id: opId(), kind: 'delete', table: 'expenses', rowId: id }, ...bundle);
       setExpenses((prev) => prev.filter((e) => e.id !== id));
+      if (bundle.length > 0) notifySync();
+      flush();
     }
-  }, [storageMode, expenses, localKey, userId]);
+  }, [storageMode, expenses, localKey, userId, flush]);
 
   const currentMonthTotal = useCallback(() => {
     const now = new Date();
@@ -256,7 +233,7 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
   const pendingCount = expenses.reduce((n, e) => n + (e.pending ? 1 : 0), 0);
 
   return {
-    expenses, loading, syncing, pendingCount, refresh, flushOutbox,
+    expenses, loading, syncing, pendingCount, refresh, flush,
     addExpense, updateExpense, deleteExpense,
     currentMonthTotal, expensesByDate, expensesForDate, monthlyTotals,
   };

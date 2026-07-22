@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
+import { getQueue, materializeRows } from './syncQueue';
+import { subscribeSync } from './syncBus';
 
 export interface AccountTransaction {
   id: string;
@@ -60,6 +63,8 @@ export function useAccountTransactions(
     return () => { supabase.removeChannel(channel); };
   }, [accountId, storageMode, refresh]);
 
+  useEffect(() => subscribeSync(refresh), [refresh]);
+
   useEffect(() => { setTransactions([]); }, [accountId, userId, storageMode]);
 
   useEffect(() => {
@@ -73,14 +78,28 @@ export function useAccountTransactions(
         setLoading(false);
       });
     } else {
-      supabase.from('account_transactions')
-        .select('*')
-        .eq('account_id', accountId)
-        .order('created_at', { ascending: false })
-        .then(({ data }) => {
-          setTransactions((data ?? []).map(rowToTxn));
-          setLoading(false);
-        });
+      const cacheKey = `@spendee_acct_txns_cache_${userId}_${accountId}`;
+      Promise.all([
+        supabase.from('account_transactions').select('*').eq('account_id', accountId).order('created_at', { ascending: false }),
+        getQueue(userId),
+      ]).then(async ([res, ops]) => {
+        let rows: any[];
+        if (res.error) {
+          const cached = await AsyncStorage.getItem(cacheKey);
+          rows = cached ? JSON.parse(cached) : [];
+        } else {
+          rows = res.data ?? [];
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(rows));
+        }
+        // Only pending inserts for THIS account (deletes are id-based no-ops elsewhere).
+        const relevant = ops.filter((o) =>
+          (o.kind === 'insert' && o.table === 'account_transactions' && o.row.account_id === accountId) ||
+          (o.kind === 'delete' && o.table === 'account_transactions')
+        );
+        const merged = materializeRows(rows, relevant, 'account_transactions');
+        setTransactions(merged.map(rowToTxn).sort((a, b) => b.createdAt - a.createdAt));
+        setLoading(false);
+      });
     }
   }, [accountId, userId, storageMode, refreshKey]);
 
@@ -94,7 +113,7 @@ export function useAccountTransactions(
 
     if (storageMode === 'local') {
       const txn: AccountTransaction = {
-        id: Date.now().toString(),
+        id: Crypto.randomUUID(),
         accountId,
         type,
         amount,
@@ -155,7 +174,7 @@ export async function addAccountTransactionDirect(
   data: Omit<AccountTransaction, 'id' | 'createdAt'>,
 ): Promise<string | null> {
   if (storageMode === 'local') {
-    const id = Date.now().toString();
+    const id = Crypto.randomUUID();
     const txn: AccountTransaction = { ...data, id, createdAt: Date.now() };
     const all = await localLoadAll(userId);
     await localSaveAll(userId, [txn, ...all]);
