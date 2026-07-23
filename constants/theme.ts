@@ -35,6 +35,7 @@ export const Categories = [
   { id: 'health',        label: 'Health',        icon: 'heart-pulse',           emoji: '💊', color: '#81C995' },
   { id: 'groceries',     label: 'Groceries',     icon: 'cart',                  emoji: '🛒', color: '#FBBC04' },
   { id: 'tech',          label: 'Tech',          icon: 'laptop',                emoji: '💻', color: '#78D9EC' },
+  { id: 'subscriptions', label: 'Subscriptions', icon: 'autorenew',             emoji: '🔁', color: '#7986CB' },
   { id: 'trip',          label: 'Trip',          icon: 'bag-suitcase',          emoji: '🧳', color: '#FFB74D' },
   { id: 'transfer',      label: 'Transfer',      icon: 'send',                  emoji: '💸', color: '#80CBC4' },
   { id: 'fitness',       label: 'Fitness',       icon: 'dumbbell',              emoji: '🏋️', color: '#F06292' },

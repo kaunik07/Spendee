@@ -142,7 +142,19 @@ export const Subcategories: Record<string, Subcategory[]> = {
   investment: [
     { id: '401k',  label: '401k', icon: 'bank-outline' },
     { id: 'etf',   label: 'ETF',  icon: 'chart-areaspline' },
+    { id: 'hysa',  label: 'HYSA', icon: 'sack-percent' },
     { id: 'other', label: 'Other', icon: 'dots-horizontal' },
+  ],
+
+  subscriptions: [
+    { id: 'ai',      label: 'AI',      icon: 'robot-outline' },
+    { id: 'dev',     label: 'Dev',     icon: 'code-tags' },
+    { id: 'food',    label: 'Food',    icon: 'silverware-fork-knife' },
+    { id: 'app',     label: 'App',     icon: 'cellphone' },
+    { id: 'fitness', label: 'Fitness', icon: 'dumbbell' },
+    { id: 'sports',  label: 'Sports',  icon: 'basketball' },
+    { id: 'outdoor', label: 'Outdoor', icon: 'pine-tree' },
+    { id: 'other',   label: 'Other',   icon: 'dots-horizontal' },
   ],
 };
 
