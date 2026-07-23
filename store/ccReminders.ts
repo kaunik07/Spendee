@@ -1,17 +1,26 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { CreditCard } from './useCreditCards';
 import { nextDueDate, daysUntil, toDateStr, dueLabel } from '@/lib/billing';
 
+// expo-notifications' functionality was removed from Expo Go (SDK 53+), where
+// merely importing/using it throws. Load it only outside Expo Go (dev/standalone
+// builds); in Expo Go the app runs fine, just without local reminders.
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+const Notifications: typeof import('expo-notifications') | null =
+  isExpoGo ? null : require('expo-notifications');
+
 // Show notifications even while the app is foregrounded.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList:   true,
-    shouldPlaySound:  true,
-    shouldSetBadge:   false,
-  }),
-});
+if (Notifications) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList:   true,
+      shouldPlaySound:  true,
+      shouldSetBadge:   false,
+    }),
+  });
+}
 
 // Settled = { [cardId]: 'YYYY-MM-DD' } — the due date the user marked handled.
 // Kept on-device (a reminder-dismissal concern), keyed per user.
@@ -55,6 +64,7 @@ export function computeDueReminders(
 }
 
 async function ensurePermission(): Promise<boolean> {
+  if (!Notifications) return false;
   const { status } = await Notifications.getPermissionsAsync();
   if (status === 'granted') return true;
   const { status: asked } = await Notifications.requestPermissionsAsync();
@@ -67,6 +77,7 @@ async function ensurePermission(): Promise<boolean> {
 // times are scheduled. Called on app launch and whenever billing days change,
 // so the next cycle stays scheduled without a server.
 export async function rescheduleCardReminders(userId: string, cards: CreditCard[]): Promise<void> {
+  if (!Notifications) return; // Expo Go — no local notifications
   await Notifications.cancelAllScheduledNotificationsAsync();
   const withBilling = cards.filter((c) => c.billingDay != null);
   if (withBilling.length === 0) return;
