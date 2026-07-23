@@ -42,7 +42,8 @@ export async function migrateLocalDataToCloud(
 
     await push('credit_cards', cards.map((c) => ({
       id: c.id, user_id: cloudUserId, name: c.name,
-      outstanding_balance: c.outstandingBalance, credit_limit: c.creditLimit, created_at: c.createdAt,
+      outstanding_balance: c.outstandingBalance, credit_limit: c.creditLimit,
+      billing_day: c.billingDay ?? null, created_at: c.createdAt,
     })));
 
     await push('account_transactions', acctTxns.map((t) => ({

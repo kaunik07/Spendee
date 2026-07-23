@@ -28,6 +28,7 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
   const [name,         setName]         = useState('');
   const [limitRaw,     setLimitRaw]     = useState('');
   const [balanceRaw,   setBalanceRaw]   = useState('');
+  const [billingRaw,   setBillingRaw]   = useState('');
 
   const renderBackdrop = useCallback(
     (props: any) => (
@@ -38,14 +39,20 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
 
   const canSave = name.trim().length > 0;
 
+  const billingDay = (() => {
+    const n = parseInt(billingRaw, 10);
+    return n >= 1 && n <= 31 ? n : null;
+  })();
+
   const handleSave = async () => {
     if (!canSave) return;
     const outstanding = parseFloat(balanceRaw) || 0;
     const limit       = parseFloat(limitRaw) || null;
-    await addCard(name.trim(), outstanding, limit);
+    await addCard(name.trim(), outstanding, limit, billingDay);
     setName('');
     setLimitRaw('');
     setBalanceRaw('');
+    setBillingRaw('');
     Keyboard.dismiss();
     sheetRef.current?.close();
   };
@@ -113,6 +120,27 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
             keyboardType="decimal-pad"
             value={balanceRaw}
             onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setBalanceRaw(t); }}
+            returnKeyType="next"
+            selectionColor={C.primary}
+          />
+        </View>
+
+        {/* Payment due day */}
+        <Text style={styles.label}>
+          Payment due day <Text style={styles.optional}>(optional)</Text>
+        </Text>
+        <Text style={styles.hint}>
+          Day of the month your payment is due (1–31). Used for reminders.
+        </Text>
+        <View style={styles.amountInputRow}>
+          <MaterialCommunityIcons name="calendar-clock" size={18} color={C.textSec} style={{ marginRight: 6 }} />
+          <TextInput
+            style={styles.amountInput}
+            placeholder="e.g. 15"
+            placeholderTextColor={C.outline}
+            keyboardType="number-pad"
+            value={billingRaw}
+            onChangeText={(t) => { if (/^\d{0,2}$/.test(t)) setBillingRaw(t); }}
             returnKeyType="done"
             onSubmitEditing={handleSave}
             selectionColor={C.primary}

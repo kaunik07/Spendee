@@ -11,6 +11,7 @@ export interface CreditCard {
   name: string;
   outstandingBalance: number;  // current amount owed on the card
   creditLimit: number | null;  // optional, for utilization display
+  billingDay: number | null;   // payment due day-of-month (1–31), for reminders
   createdAt: number;
 }
 
@@ -20,6 +21,7 @@ function rowToCard(row: any): CreditCard {
     name:               row.name,
     outstandingBalance: Number(row.outstanding_balance),
     creditLimit:        row.credit_limit != null ? Number(row.credit_limit) : null,
+    billingDay:         row.billing_day != null ? Number(row.billing_day) : null,
     createdAt:          row.created_at,
   };
 }
@@ -85,6 +87,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
     name: string,
     outstandingBalance: number,
     creditLimit: number | null,
+    billingDay: number | null = null,
   ) => {
     if (storageMode === 'local') {
       const entry: CreditCard = {
@@ -92,6 +95,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
         name: name.trim(),
         outstandingBalance,
         creditLimit,
+        billingDay,
         createdAt: Date.now(),
       };
       const updated = [...cards, entry];
@@ -103,11 +107,24 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
         name:                name.trim(),
         outstanding_balance: outstandingBalance,
         credit_limit:        creditLimit,
+        billing_day:         billingDay,
         created_at:          Date.now(),
       }).select().single();
       if (data) setCards((prev) => [...prev, rowToCard(data)]);
     }
   }, [userId, storageMode, cards, localKey]);
+
+  // Set only the billing day (leaves balance/limit/name untouched).
+  const setBillingDay = useCallback(async (id: string, billingDay: number | null) => {
+    if (storageMode === 'local') {
+      const updated = cards.map((c) => (c.id === id ? { ...c, billingDay } : c));
+      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
+      setCards(updated);
+    } else {
+      await supabase.from('credit_cards').update({ billing_day: billingDay }).eq('id', id);
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, billingDay } : c)));
+    }
+  }, [storageMode, cards, localKey]);
 
   const updateCard = useCallback(async (
     id: string,
@@ -146,5 +163,5 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
 
   const totalOutstanding = cards.reduce((sum, c) => sum + c.outstandingBalance, 0);
 
-  return { cards, loading, refresh, addCard, updateCard, deleteCard, totalOutstanding };
+  return { cards, loading, refresh, addCard, updateCard, setBillingDay, deleteCard, totalOutstanding };
 }

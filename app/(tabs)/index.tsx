@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -16,6 +16,8 @@ import { useAuthContext } from '@/store/AuthContext';
 import { useBudgetsContext } from '@/store/BudgetsContext';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
+import { computeDueReminders, getSettled, settleCardCycle, rescheduleCardReminders } from '@/store/ccReminders';
+import { dueLabel } from '@/lib/billing';
 
 const BANK_BLUE    = '#82B1FF';
 const CARD_COLOR   = '#E8906A';
@@ -28,12 +30,37 @@ export default function HomeScreen() {
   const router = useRouter();
   const { user, isGuest }           = useAuthContext();
   const { netWorth }                = useAccountsContext();
-  const { totalOutstanding }        = useCreditCardsContext();
+  const { cards, totalOutstanding } = useCreditCardsContext();
   const { expenses, refresh: refreshExpenses } = useExpenseContext();
   const { budgets, refresh: refreshBudgets }   = useBudgetsContext();
 
   const [refreshing, setRefreshing] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // ── Credit-card payment due reminders ────────────────────
+  const [settled, setSettled] = useState<Record<string, string>>({});
+  const [dueDismissed, setDueDismissed] = useState<Set<string>>(new Set());
+
+  // Billing-day signature: reload settled + reschedule notifications when it changes.
+  const billingSig = cards.map((c) => `${c.id}:${c.billingDay}`).join(',');
+  useEffect(() => {
+    if (!user?.id) return;
+    getSettled(user.id).then(setSettled);
+    rescheduleCardReminders(user.id, cards);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, billingSig]);
+
+  const dueReminders = useMemo(
+    () => computeDueReminders(cards, settled).filter((r) => !dueDismissed.has(r.card.id)),
+    [cards, settled, dueDismissed]
+  );
+
+  const handleSettle = async (cardId: string, dueStr: string) => {
+    if (!user?.id) return;
+    await settleCardCycle(user.id, cardId, dueStr);
+    setSettled(await getSettled(user.id));
+    rescheduleCardReminders(user.id, cards);
+  };
   const handleRefresh = () => {
     setRefreshing(true);
     refreshExpenses();
@@ -118,6 +145,30 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Credit-card payment due reminders */}
+        {dueReminders.map((r) => (
+          <View key={r.card.id} style={styles.dueBanner}>
+            <MaterialCommunityIcons name="calendar-alert" size={18} color={WARN_COLOR} />
+            <TouchableOpacity
+              style={{ flex: 1 }}
+              onPress={() => router.push(`/credit-card/${r.card.id}`)}
+              activeOpacity={0.8}>
+              <Text style={styles.dueBannerText}>
+                <Text style={{ fontWeight: '800' }}>{r.card.name}</Text> payment {dueLabel(r.days)}
+              </Text>
+              <Text style={styles.dueBannerSub}>
+                Last date to pay: {r.due.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleSettle(r.card.id, r.dueStr)} style={styles.settleBtn} hitSlop={6} activeOpacity={0.8}>
+              <Text style={styles.settleBtnText}>Settle</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setDueDismissed((prev) => new Set(prev).add(r.card.id))} hitSlop={8}>
+              <MaterialCommunityIcons name="close" size={16} color={Colors.outline} />
+            </TouchableOpacity>
+          </View>
+        ))}
 
         {/* ── Net Worth (hero card) ── */}
         <TouchableOpacity style={styles.heroCard} onPress={() => router.push('/profile')} activeOpacity={0.85}>
@@ -297,6 +348,28 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   guestBannerText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
+
+  dueBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: WARN_COLOR + '18',
+    borderColor: WARN_COLOR + '40',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 10,
+  },
+  dueBannerText: { color: Colors.text, fontSize: 13 },
+  dueBannerSub:  { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
+  settleBtn: {
+    backgroundColor: WARN_COLOR,
+    borderRadius: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  settleBtnText: { color: '#1A1000', fontSize: 12, fontWeight: '800' },
 
   // Hero card
   heroCard: {

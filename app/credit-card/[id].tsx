@@ -43,7 +43,7 @@ export default function CreditCardDetailScreen() {
   const sheetRef = useRef<BottomSheet>(null);
 
   const { user, storageMode }                    = useAuthContext();
-  const { cards, updateCard, deleteCard, ccTxnVersion } = useCreditCardsContext();
+  const { cards, updateCard, setBillingDay, deleteCard, ccTxnVersion } = useCreditCardsContext();
   const { accounts, updateAccount }              = useAccountsContext();
   const { transactions, addTransaction, deleteTransaction, clearAllForCard, refresh } =
     useCreditCardTransactions(id, user?.id ?? null, storageMode, ccTxnVersion);
@@ -55,6 +55,22 @@ export default function CreditCardDetailScreen() {
   // ── Inline rename ──
   const [isEditing, setIsEditing] = useState(false);
   const [editName,  setEditName]  = useState('');
+
+  // ── Inline billing-day edit ──
+  const [editingBilling, setEditingBilling] = useState(false);
+  const [billingInput,   setBillingInput]   = useState('');
+
+  const saveBillingDay = async () => {
+    const n = parseInt(billingInput, 10);
+    await setBillingDay(id, n >= 1 && n <= 31 ? n : null);
+    setEditingBilling(false);
+    Keyboard.dismiss();
+  };
+
+  const ordinal = (n: number) => {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
 
   const startRename = () => {
     setEditName(card?.name ?? '');
@@ -299,6 +315,43 @@ export default function CreditCardDetailScreen() {
             )}
           </View>
         )}
+
+        {/* Payment due day */}
+        <View style={styles.billingRow}>
+          <MaterialCommunityIcons name="calendar-clock" size={15} color={Colors.textSecondary} />
+          {editingBilling ? (
+            <>
+              <TextInput
+                style={styles.billingInput}
+                value={billingInput}
+                onChangeText={(t) => { if (/^\d{0,2}$/.test(t)) setBillingInput(t); }}
+                keyboardType="number-pad"
+                placeholder="1–31"
+                placeholderTextColor={Colors.outline}
+                autoFocus
+                maxLength={2}
+                onSubmitEditing={saveBillingDay}
+                selectionColor={CARD_COLOR}
+              />
+              <TouchableOpacity onPress={saveBillingDay} hitSlop={8}>
+                <MaterialCommunityIcons name="check" size={18} color={Colors.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setEditingBilling(false)} hitSlop={8}>
+                <MaterialCommunityIcons name="close" size={18} color={Colors.outline} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.billingTap}
+              onPress={() => { setBillingInput(card.billingDay ? String(card.billingDay) : ''); setEditingBilling(true); }}
+              activeOpacity={0.7}>
+              <Text style={styles.billingText}>
+                {card.billingDay ? `Payment due the ${ordinal(card.billingDay)}` : 'Set payment due day'}
+              </Text>
+              <MaterialCommunityIcons name="pencil-outline" size={13} color={Colors.outline} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Transaction list */}
@@ -438,6 +491,28 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   addBtnText: { color: Colors.onPrimary, fontSize: 13, fontWeight: '700' },
+
+  billingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  billingTap:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  billingText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  billingInput: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+    borderBottomWidth: 1.5,
+    borderBottomColor: CARD_COLOR,
+    minWidth: 44,
+    paddingVertical: 2,
+    textAlign: 'center',
+  },
 
   limitRow: { gap: 6 },
   limitLabel: { color: Colors.textSecondary, fontSize: 12 },
