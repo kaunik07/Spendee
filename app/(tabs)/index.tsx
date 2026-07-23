@@ -46,21 +46,26 @@ export default function HomeScreen() {
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const today    = todayStr();
 
-  const trueNetWorth = netWorth - totalOutstanding;
-
   const totalInvested = useMemo(
     () => expenses.filter((e) => e.category === 'investment').reduce((s, e) => s + e.amount, 0),
     [expenses]
   );
 
+  // Liquid = what's readily available (bank minus card debt).
+  // Total  = liquid plus everything put into investments.
+  const liquidNetWorth = netWorth - totalOutstanding;
+  const totalNetWorth  = liquidNetWorth + totalInvested;
+
   const todayExpenses = useMemo(() => expenses.filter((e) => e.date === today), [expenses, today]);
   const todayTotal    = todayExpenses.reduce((s, e) => s + e.amount, 0);
 
-  // Most spent category this month
+  // Most spent category this month (investment isn't spending — exclude it)
   const topCategory = useMemo(() => {
     const map: Record<string, number> = {};
     expenses.forEach((e) => {
-      if (e.date.startsWith(monthKey)) map[e.category] = (map[e.category] ?? 0) + e.amount;
+      if (e.date.startsWith(monthKey) && e.category !== 'investment') {
+        map[e.category] = (map[e.category] ?? 0) + e.amount;
+      }
     });
     const entries = Object.entries(map).sort(([, a], [, b]) => b - a);
     if (entries.length === 0) return null;
@@ -117,10 +122,16 @@ export default function HomeScreen() {
         {/* ── Net Worth (hero card) ── */}
         <TouchableOpacity style={styles.heroCard} onPress={() => router.push('/profile')} activeOpacity={0.85}>
           <View style={styles.heroTop}>
-            <View>
-              <Text style={styles.heroLabel}>Net Worth</Text>
-              <Text style={[styles.heroAmount, { color: trueNetWorth >= 0 ? Colors.primary : Colors.danger }]}>
-                {trueNetWorth < 0 ? '−' : ''}${Math.abs(trueNetWorth).toFixed(2)}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroLabel}>Total Net Worth</Text>
+              <Text style={[styles.heroAmount, { color: totalNetWorth >= 0 ? Colors.primary : Colors.danger }]}>
+                {totalNetWorth < 0 ? '−' : ''}${Math.abs(totalNetWorth).toFixed(2)}
+              </Text>
+              <Text style={styles.heroSub}>
+                Liquid (Bank − Cards):{' '}
+                <Text style={{ color: Colors.textSecondary, fontWeight: '700' }}>
+                  {liquidNetWorth < 0 ? '−' : ''}${Math.abs(liquidNetWorth).toFixed(2)}
+                </Text>
               </Text>
             </View>
             <View style={styles.heroIcon}>
@@ -135,6 +146,10 @@ export default function HomeScreen() {
             <View style={styles.heroChip}>
               <View style={[styles.chipDot, { backgroundColor: CARD_COLOR }]} />
               <Text style={styles.heroChipText}>Cards  <Text style={{ color: CARD_COLOR }}>−${totalOutstanding.toFixed(2)}</Text></Text>
+            </View>
+            <View style={styles.heroChip}>
+              <View style={[styles.chipDot, { backgroundColor: INVEST_COLOR }]} />
+              <Text style={styles.heroChipText}>Invest  <Text style={{ color: INVEST_COLOR }}>+${totalInvested.toFixed(2)}</Text></Text>
             </View>
           </View>
         </TouchableOpacity>
@@ -296,6 +311,7 @@ const styles = StyleSheet.create({
   heroTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   heroLabel:  { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', marginBottom: 4 },
   heroAmount: { fontSize: 34, fontWeight: '800', letterSpacing: -1 },
+  heroSub:    { color: Colors.textMuted, fontSize: 12, marginTop: 6 },
   heroIcon: {
     width: 48,
     height: 48,
@@ -304,7 +320,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBreakdown: { flexDirection: 'row', gap: 10 },
+  heroBreakdown: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   heroChip: {
     flexDirection: 'row',
     alignItems: 'center',

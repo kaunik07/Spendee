@@ -43,6 +43,7 @@ export const Subcategories: Record<string, Subcategory[]> = {
       id: 'cab', label: 'Cab', icon: 'taxi',
       fields: [{ key: 'provider', label: 'Service', type: 'chips', options: ['Lyft', 'Uber'] }],
     },
+    { id: 'lime', label: 'Lime', icon: 'scooter' },
     {
       id: 'flight', label: 'Flight', icon: 'airplane',
       fields: [
@@ -99,10 +100,11 @@ export const Subcategories: Record<string, Subcategory[]> = {
   ],
 
   food: [
-    { id: 'uber-eats', label: 'Uber Eats', icon: 'moped',                  fields: FOOD_FIELDS },
-    { id: 'doordash',  label: 'DoorDash',  icon: 'bike-fast',              fields: FOOD_FIELDS },
-    { id: 'dining',    label: 'Dining',    icon: 'silverware-fork-knife',  fields: FOOD_FIELDS },
-    { id: 'other',     label: 'Other',     icon: 'dots-horizontal' },
+    { id: 'uber-eats',    label: 'Uber Eats',    icon: 'moped',                  fields: FOOD_FIELDS },
+    { id: 'doordash',     label: 'DoorDash',     icon: 'bike-fast',              fields: FOOD_FIELDS },
+    { id: 'dining',       label: 'Dining',       icon: 'silverware-fork-knife',  fields: FOOD_FIELDS },
+    { id: 'office-lunch', label: 'Office Lunch', icon: 'office-building',        fields: FOOD_FIELDS },
+    { id: 'other',        label: 'Other',        icon: 'dots-horizontal' },
   ],
 
   entertainment: [
@@ -135,6 +137,12 @@ export const Subcategories: Record<string, Subcategory[]> = {
     { id: 'gym-membership', label: 'Gym Membership', icon: 'dumbbell' },
     { id: 'equipment',      label: 'Equip',          icon: 'weight-lifter' },
     { id: 'other',          label: 'Other',          icon: 'dots-horizontal' },
+  ],
+
+  investment: [
+    { id: '401k',  label: '401k', icon: 'bank-outline' },
+    { id: 'etf',   label: 'ETF',  icon: 'chart-areaspline' },
+    { id: 'other', label: 'Other', icon: 'dots-horizontal' },
   ],
 };
 

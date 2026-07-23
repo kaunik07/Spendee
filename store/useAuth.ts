@@ -117,6 +117,33 @@ export function useAuth() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
+          // Restore the account instantly from the cached profile so the UI and
+          // the Face ID lock appear without waiting on the network. After a long
+          // sleep the token refresh can be slow/hang, and blocking on it here is
+          // what left the app showing "??" with no data and no biometric prompt.
+          const cachedRaw = await SecureStore.getItemAsync(LAST_USER_KEY);
+          const cached = cachedRaw ? (JSON.parse(cachedRaw) as User) : null;
+          if (cached && cached.id === session.user.id) {
+            await setStorageMode('online');
+            if (!active) return;
+            setMode('online');
+            setUser(cached);
+            if (cached.biometricEnabled) setRequiresBiometric(true);
+            // Best-effort background refresh; NEVER sign out on failure — a
+            // transient network error must not drop a real account.
+            fetchProfile(session.user.id)
+              .then((p) => {
+                if (p && active) {
+                  setUser(p);
+                  setLastUser(p);
+                  SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(p));
+                }
+              })
+              .catch(() => { /* offline — keep the cached session */ });
+            return;
+          }
+
+          // No usable cache — fetch the profile (blocking) this once.
           const profile = await fetchProfile(session.user.id);
           if (profile) {
             await setStorageMode('online');
@@ -128,8 +155,8 @@ export function useAuth() {
             if (profile.biometricEnabled) setRequiresBiometric(true);
             return;
           }
-          // Session points at a deleted account — drop it and fall to guest.
-          await supabase.auth.signOut();
+          // Session but no profile and no cache — likely offline. Keep the
+          // session and fall through to a usable guest; next launch retries.
         }
 
         // No online session → resume the local/guest session, or create a guest.
