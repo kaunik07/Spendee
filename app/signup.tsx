@@ -49,17 +49,33 @@ export default function SignupScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
 
-          {/* Close → back to the app (guest home). iOS has no hardware back. */}
-          <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.backBtn} hitSlop={10}>
-            <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
-          </TouchableOpacity>
+          {/* Close → back to the app (guest home). iOS has no hardware back.
+              Web has no guest mode, so there's nowhere to "close" back to —
+              a real account is required before any app content shows. */}
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.backBtn} hitSlop={10}>
+              <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+          )}
 
+          <View style={Platform.OS === 'web' ? styles.webWrap : undefined}>
           <View style={styles.headerArea}>
-            <Text style={styles.title}>Back up to the cloud</Text>
-            <Text style={styles.subtitle}>
-              Create an account to sync your data across devices. Everything you&apos;ve
-              added so far comes with you.
-            </Text>
+            {Platform.OS === 'web' ? (
+              <>
+                <Text style={styles.title}>Create your account</Text>
+                <Text style={styles.subtitle}>
+                  Sign up to start tracking your spending on the web.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.title}>Back up to the cloud</Text>
+                <Text style={styles.subtitle}>
+                  Create an account to sync your data across devices. Everything you&apos;ve
+                  added so far comes with you.
+                </Text>
+              </>
+            )}
           </View>
 
           {/* Form */}
@@ -136,6 +152,7 @@ export default function SignupScreen() {
               <Text style={styles.loginLink}>Log in</Text>
             </TouchableOpacity>
           </View>
+          </View>
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -145,7 +162,14 @@ export default function SignupScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40 },
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'web' ? 64 : 16,
+    paddingBottom: 40,
+    ...(Platform.OS === 'web' ? { alignItems: 'center' as const, justifyContent: 'center' as const } : null),
+  },
+  webWrap: { width: '100%', maxWidth: 440 },
 
   backBtn: { marginBottom: 24, alignSelf: 'flex-start', padding: 2 },
 

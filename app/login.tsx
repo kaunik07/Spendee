@@ -93,14 +93,19 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
 
-          {/* Close → back to the app (guest home). iOS has no hardware back. */}
-          <TouchableOpacity
-            onPress={() => router.replace('/(tabs)')}
-            style={styles.closeBtn}
-            hitSlop={12}>
-            <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
-          </TouchableOpacity>
+          {/* Close → back to the app (guest home). iOS has no hardware back.
+              Web has no guest mode, so there's nowhere to "close" back to —
+              a real account is required before any app content shows. */}
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity
+              onPress={() => router.replace('/(tabs)')}
+              style={styles.closeBtn}
+              hitSlop={12}>
+              <MaterialCommunityIcons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+          )}
 
+          <View style={Platform.OS === 'web' ? styles.webWrap : undefined}>
           {/* Logo */}
           <View style={styles.logoArea}>
             <View style={styles.logoIcon}>
@@ -195,6 +200,7 @@ export default function LoginScreen() {
               v{appVersion} ({buildNumber}) · {gitSha} · long-press to reset
             </Text>
           </Pressable>
+          </View>
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -204,7 +210,14 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 },
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'web' ? 64 : 24,
+    paddingBottom: 40,
+    ...(Platform.OS === 'web' ? { alignItems: 'center' as const, justifyContent: 'center' as const } : null),
+  },
+  webWrap: { width: '100%', maxWidth: 440 },
   closeBtn: { alignSelf: 'flex-start', padding: 2, marginBottom: 8 },
   backendTag: {
     color: Colors.textMuted,
