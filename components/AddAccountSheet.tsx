@@ -1,9 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useAccountsContext } from '@/store/AccountsContext';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:      '#1C1B23',
@@ -26,6 +28,8 @@ export default function AddAccountSheet({ sheetRef }: Props) {
   const keyboardHeight = useKeyboardHeight();
   const [name,       setName]       = useState('');
   const [balanceRaw, setBalanceRaw] = useState('');
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const renderBackdrop = useCallback(
     (props: any) => (
@@ -46,6 +50,59 @@ export default function AddAccountSheet({ sheetRef }: Props) {
     sheetRef.current?.close();
   };
 
+  const formContent = (
+    <>
+      {Platform.OS !== 'web' && <Text style={styles.title}>New Account</Text>}
+
+      <Text style={styles.label}>Account name</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="e.g. Chase Checking, Savings, Cash..."
+        placeholderTextColor={C.outline}
+        value={name}
+        onChangeText={setName}
+        maxLength={60}
+        returnKeyType="next"
+        selectionColor={C.primary}
+      />
+
+      <Text style={styles.label}>
+        Current balance <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <View style={styles.amountInputRow}>
+        <Text style={styles.currencySymbol}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={balanceRaw}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setBalanceRaw(t); }}
+          returnKeyType="done"
+          onSubmitEditing={handleSave}
+          selectionColor={C.primary}
+        />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        activeOpacity={0.85}
+        disabled={!canSave}>
+        <MaterialCommunityIcons name="bank-plus" size={20} color={C.onPrim} />
+        <Text style={styles.saveBtnText}>Add Account</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="New Account">
+        {formContent}
+      </WebDrawer>
+    );
+  }
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -59,48 +116,7 @@ export default function AddAccountSheet({ sheetRef }: Props) {
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        <Text style={styles.title}>New Account</Text>
-
-        <Text style={styles.label}>Account name</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Chase Checking, Savings, Cash..."
-          placeholderTextColor={C.outline}
-          value={name}
-          onChangeText={setName}
-          maxLength={60}
-          returnKeyType="next"
-          selectionColor={C.primary}
-        />
-
-        <Text style={styles.label}>
-          Current balance <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <View style={styles.amountInputRow}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={balanceRaw}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setBalanceRaw(t); }}
-            returnKeyType="done"
-            onSubmitEditing={handleSave}
-            selectionColor={C.primary}
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          activeOpacity={0.85}
-          disabled={!canSave}>
-          <MaterialCommunityIcons name="bank-plus" size={20} color={C.onPrim} />
-          <Text style={styles.saveBtnText}>Add Account</Text>
-        </TouchableOpacity>
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -124,15 +140,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 8,
+    marginTop: Platform.OS === 'web' ? 18 : 0,
   },
   optional: { color: C.outline, textTransform: 'none', fontWeight: '400' },
   input: {
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
     marginBottom: 20,
@@ -153,7 +170,7 @@ const styles = StyleSheet.create({
     color: C.text,
     fontSize: 18,
     fontWeight: '600',
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
   },
 
   saveBtn: {

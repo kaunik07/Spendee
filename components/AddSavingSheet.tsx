@@ -3,6 +3,7 @@ import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Keyboard,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +12,8 @@ import {
 } from 'react-native';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useSavingsContext } from '@/store/SavingsContext';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:       '#1C1B23',
@@ -36,6 +39,8 @@ export default function AddSavingSheet({ sheetRef }: Props) {
   const { addSaving } = useSavingsContext();
   const snapPoints = useMemo(() => ['70%'], []);
   const keyboardHeight = useKeyboardHeight();
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const [amount, setAmount] = useState('');
   const [name, setName]     = useState('');
@@ -65,6 +70,72 @@ export default function AddSavingSheet({ sheetRef }: Props) {
     sheetRef.current?.close();
   };
 
+  const formContent = (
+    <>
+      {Platform.OS !== 'web' && <Text style={styles.sheetTitle}>Log Saving</Text>}
+
+      {/* Amount */}
+      <View style={styles.amountRow}>
+        <Text style={styles.currencySymbol}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={amount}
+          onChangeText={(t) => {
+            if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t);
+          }}
+          selectionColor={C.primary}
+        />
+      </View>
+
+      {/* What did you skip? */}
+      <Text style={styles.fieldLabel}>What did you skip?</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="e.g. Cab ride, Coffee, Takeout..."
+        placeholderTextColor={C.outline}
+        value={name}
+        onChangeText={setName}
+        maxLength={60}
+        returnKeyType="next"
+        selectionColor={C.primary}
+      />
+
+      {/* Notes */}
+      <Text style={styles.fieldLabel}>How? <Text style={styles.optional}>(optional)</Text></Text>
+      <TextInput
+        style={[styles.input, styles.noteInput]}
+        placeholder="e.g. Walked instead of taking a cab..."
+        placeholderTextColor={C.outline}
+        value={note}
+        onChangeText={setNote}
+        multiline
+        maxLength={200}
+        selectionColor={C.primary}
+      />
+
+      {/* Save */}
+      <TouchableOpacity
+        style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        activeOpacity={0.85}
+        disabled={!canSave}>
+        <MaterialCommunityIcons name="piggy-bank-outline" size={20} color={C.onPrim} />
+        <Text style={styles.saveBtnText}>Save</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Log Saving">
+        {formContent}
+      </WebDrawer>
+    );
+  }
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -78,61 +149,7 @@ export default function AddSavingSheet({ sheetRef }: Props) {
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        <Text style={styles.sheetTitle}>Log Saving</Text>
-
-        {/* Amount */}
-        <View style={styles.amountRow}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={amount}
-            onChangeText={(t) => {
-              if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t);
-            }}
-            selectionColor={C.primary}
-          />
-        </View>
-
-        {/* What did you skip? */}
-        <Text style={styles.fieldLabel}>What did you skip?</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Cab ride, Coffee, Takeout..."
-          placeholderTextColor={C.outline}
-          value={name}
-          onChangeText={setName}
-          maxLength={60}
-          returnKeyType="next"
-          selectionColor={C.primary}
-        />
-
-        {/* Notes */}
-        <Text style={styles.fieldLabel}>How? <Text style={styles.optional}>(optional)</Text></Text>
-        <TextInput
-          style={[styles.input, styles.noteInput]}
-          placeholder="e.g. Walked instead of taking a cab..."
-          placeholderTextColor={C.outline}
-          value={note}
-          onChangeText={setNote}
-          multiline
-          maxLength={200}
-          selectionColor={C.primary}
-        />
-
-        {/* Save */}
-        <TouchableOpacity
-          style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          activeOpacity={0.85}
-          disabled={!canSave}>
-          <MaterialCommunityIcons name="piggy-bank-outline" size={20} color={C.onPrim} />
-          <Text style={styles.saveBtnText}>Save</Text>
-        </TouchableOpacity>
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -156,17 +173,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.surface,
     borderRadius: 20,
-    paddingVertical: 18,
+    paddingVertical: Platform.OS === 'web' ? 14 : 18,
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: Platform.OS === 'web' ? 28 : 24,
     borderWidth: 1,
     borderColor: C.border,
     gap: 6,
   },
-  currencySymbol: { color: C.primary, fontSize: 32, fontWeight: '700' },
+  currencySymbol: { color: C.primary, fontSize: Platform.OS === 'web' ? 22 : 32, fontWeight: '700' },
   amountInput: {
     color: C.text,
-    fontSize: 48,
+    fontSize: Platform.OS === 'web' ? 32 : 48,
     fontWeight: '800',
     letterSpacing: -1,
     minWidth: 100,
@@ -180,7 +197,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 8,
-    marginTop: 4,
+    marginTop: Platform.OS === 'web' ? 20 : 4,
   },
   optional: { color: C.outline, textTransform: 'none', fontWeight: '400' },
 
@@ -188,12 +205,12 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
-    marginBottom: 18,
+    marginBottom: Platform.OS === 'web' ? 22 : 18,
   },
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
 

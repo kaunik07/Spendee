@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:        '#1C1B23',
@@ -27,6 +29,8 @@ interface Props {
 export default function AddAccountTransactionSheet({ sheetRef, onSave }: Props) {
   const snapPoints = useMemo(() => ['60%'], []);
   const keyboardHeight = useKeyboardHeight();
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const [type,   setType]   = useState<TxnType>('deposit');
   const [amount, setAmount] = useState('');
@@ -55,6 +59,94 @@ export default function AddAccountTransactionSheet({ sheetRef, onSave }: Props) 
   const accent    = isDeposit ? C.deposit : C.withdraw;
   const onAccent  = isDeposit ? C.onDeposit : C.onWithdraw;
 
+  const formContent = (
+    <>
+      {/* Type toggle */}
+      <View style={styles.typeToggle}>
+        <TouchableOpacity
+          style={[styles.typeBtn, isDeposit && { backgroundColor: C.deposit }]}
+          onPress={() => setType('deposit')}
+          activeOpacity={0.8}>
+          <MaterialCommunityIcons
+            name="plus-circle-outline"
+            size={18}
+            color={isDeposit ? C.onDeposit : C.outline}
+          />
+          <Text style={[styles.typeBtnText, isDeposit && { color: C.onDeposit }]}>
+            Add Money
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.typeBtn, !isDeposit && { backgroundColor: C.withdraw }]}
+          onPress={() => setType('withdrawal')}
+          activeOpacity={0.8}>
+          <MaterialCommunityIcons
+            name="minus-circle-outline"
+            size={18}
+            color={!isDeposit ? C.onWithdraw : C.outline}
+          />
+          <Text style={[styles.typeBtnText, !isDeposit && { color: C.onWithdraw }]}>
+            Deduct Money
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Amount */}
+      <View style={[styles.amountRow, { borderColor: accent + '60' }]}>
+        <Text style={[styles.sign, { color: accent }]}>{isDeposit ? '+' : '−'}</Text>
+        <Text style={[styles.currency, { color: accent }]}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={amount}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
+          selectionColor={accent}
+        />
+      </View>
+
+      {/* Note */}
+      <Text style={styles.label}>
+        Note <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <TextInput
+        style={styles.input}
+        placeholder="e.g. Salary, Rent, Groceries..."
+        placeholderTextColor={C.outline}
+        value={note}
+        onChangeText={setNote}
+        maxLength={100}
+        returnKeyType="done"
+        onSubmitEditing={handleSave}
+        selectionColor={accent}
+      />
+
+      <TouchableOpacity
+        style={[styles.saveBtn, { backgroundColor: accent }, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        activeOpacity={0.85}
+        disabled={!canSave}>
+        <MaterialCommunityIcons
+          name={isDeposit ? 'plus-circle' : 'minus-circle'}
+          size={20}
+          color={onAccent}
+        />
+        <Text style={[styles.saveBtnText, { color: onAccent }]}>
+          {isDeposit ? 'Add Money' : 'Deduct Money'}
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Account Transaction">
+        {formContent}
+      </WebDrawer>
+    );
+  }
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -68,83 +160,7 @@ export default function AddAccountTransactionSheet({ sheetRef, onSave }: Props) 
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        {/* Type toggle */}
-        <View style={styles.typeToggle}>
-          <TouchableOpacity
-            style={[styles.typeBtn, isDeposit && { backgroundColor: C.deposit }]}
-            onPress={() => setType('deposit')}
-            activeOpacity={0.8}>
-            <MaterialCommunityIcons
-              name="plus-circle-outline"
-              size={18}
-              color={isDeposit ? C.onDeposit : C.outline}
-            />
-            <Text style={[styles.typeBtnText, isDeposit && { color: C.onDeposit }]}>
-              Add Money
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.typeBtn, !isDeposit && { backgroundColor: C.withdraw }]}
-            onPress={() => setType('withdrawal')}
-            activeOpacity={0.8}>
-            <MaterialCommunityIcons
-              name="minus-circle-outline"
-              size={18}
-              color={!isDeposit ? C.onWithdraw : C.outline}
-            />
-            <Text style={[styles.typeBtnText, !isDeposit && { color: C.onWithdraw }]}>
-              Deduct Money
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Amount */}
-        <View style={[styles.amountRow, { borderColor: accent + '60' }]}>
-          <Text style={[styles.sign, { color: accent }]}>{isDeposit ? '+' : '−'}</Text>
-          <Text style={[styles.currency, { color: accent }]}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={amount}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
-            selectionColor={accent}
-          />
-        </View>
-
-        {/* Note */}
-        <Text style={styles.label}>
-          Note <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Salary, Rent, Groceries..."
-          placeholderTextColor={C.outline}
-          value={note}
-          onChangeText={setNote}
-          maxLength={100}
-          returnKeyType="done"
-          onSubmitEditing={handleSave}
-          selectionColor={accent}
-        />
-
-        <TouchableOpacity
-          style={[styles.saveBtn, { backgroundColor: accent }, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          activeOpacity={0.85}
-          disabled={!canSave}>
-          <MaterialCommunityIcons
-            name={isDeposit ? 'plus-circle' : 'minus-circle'}
-            size={20}
-            color={onAccent}
-          />
-          <Text style={[styles.saveBtnText, { color: onAccent }]}>
-            {isDeposit ? 'Add Money' : 'Deduct Money'}
-          </Text>
-        </TouchableOpacity>
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -180,17 +196,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.surface,
     borderRadius: 20,
-    paddingVertical: 18,
+    paddingVertical: Platform.OS === 'web' ? 14 : 18,
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: Platform.OS === 'web' ? 28 : 24,
     borderWidth: 1.5,
     gap: 4,
   },
-  sign:     { fontSize: 36, fontWeight: '800', lineHeight: 52 },
-  currency: { fontSize: 32, fontWeight: '700' },
+  sign:     { fontSize: Platform.OS === 'web' ? 26 : 36, fontWeight: '800', lineHeight: Platform.OS === 'web' ? 36 : 52 },
+  currency: { fontSize: Platform.OS === 'web' ? 22 : 32, fontWeight: '700' },
   amountInput: {
     color: C.text,
-    fontSize: 48,
+    fontSize: Platform.OS === 'web' ? 32 : 48,
     fontWeight: '800',
     letterSpacing: -1,
     minWidth: 100,
@@ -210,9 +226,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
     marginBottom: 24,

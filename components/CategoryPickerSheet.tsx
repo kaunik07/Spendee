@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import React, { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Categories } from '@/constants/theme';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 type Category = typeof Categories[number];
 
@@ -24,6 +26,8 @@ interface Props {
 
 export default function CategoryPickerSheet({ sheetRef, selected, onSelect, categories = Categories }: Props) {
   const snapPoints = useMemo(() => ['65%'], []);
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const renderBackdrop = useCallback(
     (props: any) => (
@@ -31,6 +35,43 @@ export default function CategoryPickerSheet({ sheetRef, selected, onSelect, cate
     ),
     []
   );
+
+  const formContent = (
+    <>
+      <Text style={styles.title}>Select Category</Text>
+      <View style={styles.grid}>
+        {categories.map((cat) => {
+          const isSelected = selected === cat.id;
+          return (
+            <Pressable
+              key={cat.id}
+              style={[styles.cell, isSelected && { backgroundColor: cat.color + '22', borderColor: cat.color }]}
+              onPress={() => {
+                onSelect(cat.id);
+                sheetRef.current?.close();
+              }}
+              android_ripple={{ color: cat.color + '33' }}>
+              <View style={[styles.iconCircle, { backgroundColor: cat.color + '22' }]}>
+                <MaterialCommunityIcons name={cat.icon as any} size={24} color={cat.color} />
+              </View>
+              <Text style={[styles.cellLabel, isSelected && { color: cat.color }]}>{cat.label}</Text>
+              {isSelected && (
+                <MaterialCommunityIcons name="check-circle" size={16} color={cat.color} style={styles.check} />
+              )}
+            </Pressable>
+          );
+        })}
+      </View>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Select Category">
+        {formContent}
+      </WebDrawer>
+    );
+  }
 
   return (
     <BottomSheet
@@ -42,30 +83,7 @@ export default function CategoryPickerSheet({ sheetRef, selected, onSelect, cate
       backgroundStyle={{ backgroundColor: C.bg }}
       handleIndicatorStyle={{ backgroundColor: C.outline }}>
       <BottomSheetScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Select Category</Text>
-        <View style={styles.grid}>
-          {categories.map((cat) => {
-            const isSelected = selected === cat.id;
-            return (
-              <Pressable
-                key={cat.id}
-                style={[styles.cell, isSelected && { backgroundColor: cat.color + '22', borderColor: cat.color }]}
-                onPress={() => {
-                  onSelect(cat.id);
-                  sheetRef.current?.close();
-                }}
-                android_ripple={{ color: cat.color + '33' }}>
-                <View style={[styles.iconCircle, { backgroundColor: cat.color + '22' }]}>
-                  <MaterialCommunityIcons name={cat.icon as any} size={24} color={cat.color} />
-                </View>
-                <Text style={[styles.cellLabel, isSelected && { color: cat.color }]}>{cat.label}</Text>
-                {isSelected && (
-                  <MaterialCommunityIcons name="check-circle" size={16} color={cat.color} style={styles.check} />
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );

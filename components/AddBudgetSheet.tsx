@@ -2,8 +2,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Keyboard,
+  Platform,
   StyleSheet,
   Switch,
   Text,
@@ -15,6 +15,8 @@ import { Categories, getCategoryById } from '@/constants/theme';
 import { useBudgetsContext } from '@/store/BudgetsContext';
 import { Budget } from '@/store/useBudgets';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:      '#1C1B23',
@@ -39,6 +41,8 @@ export default function AddBudgetSheet({ sheetRef, editing, onClose }: Props) {
   const { budgets, setBudget, deleteBudget } = useBudgetsContext();
   const keyboardHeight = useKeyboardHeight();
   const snapPoints     = useMemo(() => ['75%'], []);
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const [category, setCategory] = useState<string | null>(null);
   const [amount,   setAmount]   = useState('');
@@ -87,21 +91,118 @@ export default function AddBudgetSheet({ sheetRef, editing, onClose }: Props) {
 
   const handleDelete = () => {
     if (!editing) return;
-    Alert.alert(
-      'Remove Budget',
-      `Stop tracking a budget for ${getCategoryById(editing.category).label}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => { await deleteBudget(editing.id); close(); },
-        },
-      ]
-    );
+    if (typeof window !== 'undefined' && !window.confirm(`Stop tracking a budget for ${getCategoryById(editing.category).label}?`)) return;
+    (async () => { await deleteBudget(editing.id); close(); })();
   };
 
   const cat = category ? getCategoryById(category) : null;
+
+  const formContent = (
+    <>
+      {Platform.OS !== 'web' && (
+        <>
+          <Text style={styles.title}>{editing ? 'Edit Budget' : 'Set a Budget'}</Text>
+          <Text style={styles.subtitle}>
+            {editing ? 'Adjust the monthly limit for this category' : 'Choose a category and a monthly spending limit'}
+          </Text>
+        </>
+      )}
+
+      {/* Category */}
+      {editing && cat ? (
+        <View style={styles.editingCatRow}>
+          <View style={[styles.catCellIcon, { backgroundColor: cat.color + '22' }]}>
+            <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
+          </View>
+          <Text style={[styles.editingCatLabel, { color: cat.color }]}>{cat.label}</Text>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.fieldLabel}>Category</Text>
+          {available.length === 0 ? (
+            <Text style={styles.allSetText}>Every category already has a budget 🎉</Text>
+          ) : (
+            <View style={styles.catGrid}>
+              {available.map((c) => {
+                const selected = category === c.id;
+                return (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.catChip, selected && { borderColor: c.color, backgroundColor: c.color + '18' }]}
+                    onPress={() => setCategory(selected ? null : c.id)}
+                    activeOpacity={0.75}>
+                    <MaterialCommunityIcons name={c.icon as any} size={15} color={selected ? c.color : C.outline} />
+                    <Text style={[styles.catChipText, selected && { color: c.color }]}>{c.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </>
+      )}
+
+      {/* Monthly limit */}
+      <Text style={styles.fieldLabel}>Monthly limit</Text>
+      <View style={styles.amountRow}>
+        <Text style={styles.currencySymbol}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={amount}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
+          selectionColor={C.primary}
+        />
+        <Text style={styles.perMonth}>/ month</Text>
+      </View>
+
+      {/* Pin to Home */}
+      <View style={styles.pinRow}>
+        <MaterialCommunityIcons
+          name={pinned ? 'pin' : 'pin-outline'}
+          size={17}
+          color={pinned ? C.primary : C.outline}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.pinLabel, pinned && { color: C.primary }]}>Pin to Home</Text>
+          <Text style={styles.pinHint}>Show remaining budget as a card on the Home tab</Text>
+        </View>
+        <Switch
+          value={pinned}
+          onValueChange={setPinned}
+          trackColor={{ false: C.border, true: C.primary + '60' }}
+          thumbColor={pinned ? C.primary : C.outline}
+        />
+      </View>
+
+      {/* Save */}
+      <TouchableOpacity
+        style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        disabled={!canSave}
+        activeOpacity={0.85}>
+        <MaterialCommunityIcons name="check" size={20} color={C.onPrim} />
+        <Text style={styles.saveBtnText}>{editing ? 'Save Changes' : 'Set Budget'}</Text>
+      </TouchableOpacity>
+
+      {/* Delete (edit mode) */}
+      {editing && (
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="trash-can-outline" size={17} color={C.danger} />
+          <Text style={styles.deleteBtnText}>Remove Budget</Text>
+        </TouchableOpacity>
+      )}
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => { setWebVisible(false); onClose(); }} title={editing ? 'Edit Budget' : 'Set a Budget'}>
+        {formContent}
+      </WebDrawer>
+    );
+  }
 
   return (
     <BottomSheet
@@ -117,100 +218,7 @@ export default function AddBudgetSheet({ sheetRef, editing, onClose }: Props) {
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        <Text style={styles.title}>{editing ? 'Edit Budget' : 'Set a Budget'}</Text>
-        <Text style={styles.subtitle}>
-          {editing
-            ? 'Adjust the monthly limit for this category'
-            : 'Choose a category and a monthly spending limit'}
-        </Text>
-
-        {/* Category */}
-        {editing && cat ? (
-          <View style={styles.editingCatRow}>
-            <View style={[styles.catCellIcon, { backgroundColor: cat.color + '22' }]}>
-              <MaterialCommunityIcons name={cat.icon as any} size={20} color={cat.color} />
-            </View>
-            <Text style={[styles.editingCatLabel, { color: cat.color }]}>{cat.label}</Text>
-          </View>
-        ) : (
-          <>
-            <Text style={styles.fieldLabel}>Category</Text>
-            {available.length === 0 ? (
-              <Text style={styles.allSetText}>Every category already has a budget 🎉</Text>
-            ) : (
-              <View style={styles.catGrid}>
-                {available.map((c) => {
-                  const selected = category === c.id;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      style={[styles.catChip, selected && { borderColor: c.color, backgroundColor: c.color + '18' }]}
-                      onPress={() => setCategory(selected ? null : c.id)}
-                      activeOpacity={0.75}>
-                      <MaterialCommunityIcons name={c.icon as any} size={15} color={selected ? c.color : C.outline} />
-                      <Text style={[styles.catChipText, selected && { color: c.color }]}>{c.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </>
-        )}
-
-        {/* Monthly limit */}
-        <Text style={styles.fieldLabel}>Monthly limit</Text>
-        <View style={styles.amountRow}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={amount}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
-            selectionColor={C.primary}
-          />
-          <Text style={styles.perMonth}>/ month</Text>
-        </View>
-
-        {/* Pin to Home */}
-        <View style={styles.pinRow}>
-          <MaterialCommunityIcons
-            name={pinned ? 'pin' : 'pin-outline'}
-            size={17}
-            color={pinned ? C.primary : C.outline}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.pinLabel, pinned && { color: C.primary }]}>Pin to Home</Text>
-            <Text style={styles.pinHint}>Show remaining budget as a card on the Home tab</Text>
-          </View>
-          <Switch
-            value={pinned}
-            onValueChange={setPinned}
-            trackColor={{ false: C.border, true: C.primary + '60' }}
-            thumbColor={pinned ? C.primary : C.outline}
-          />
-        </View>
-
-        {/* Save */}
-        <TouchableOpacity
-          style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          disabled={!canSave}
-          activeOpacity={0.85}>
-          <MaterialCommunityIcons name="check" size={20} color={C.onPrim} />
-          <Text style={styles.saveBtnText}>{editing ? 'Save Changes' : 'Set Budget'}</Text>
-        </TouchableOpacity>
-
-        {/* Delete (edit mode) */}
-        {editing && (
-          <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="trash-can-outline" size={17} color={C.danger} />
-            <Text style={styles.deleteBtnText}>Remove Budget</Text>
-          </TouchableOpacity>
-        )}
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -241,7 +249,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 10,
-    marginTop: 4,
+    marginTop: Platform.OS === 'web' ? 18 : 4,
   },
 
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
@@ -282,17 +290,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.surface,
     borderRadius: 18,
-    paddingVertical: 16,
+    paddingVertical: Platform.OS === 'web' ? 12 : 16,
     paddingHorizontal: 20,
-    marginBottom: 26,
+    marginBottom: Platform.OS === 'web' ? 28 : 26,
     borderWidth: 1,
     borderColor: C.border,
     gap: 6,
   },
-  currencySymbol: { color: C.primary, fontSize: 26, fontWeight: '700' },
+  currencySymbol: { color: C.primary, fontSize: Platform.OS === 'web' ? 20 : 26, fontWeight: '700' },
   amountInput: {
     color: C.text,
-    fontSize: 38,
+    fontSize: Platform.OS === 'web' ? 28 : 38,
     fontWeight: '800',
     letterSpacing: -1,
     minWidth: 90,

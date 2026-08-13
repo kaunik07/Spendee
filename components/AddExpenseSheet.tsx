@@ -18,6 +18,9 @@ import {
 } from 'react-native';
 import CategoryPickerSheet from './CategoryPickerSheet';
 import SubcategorySection from './SubcategorySection';
+import WebDatePickerModal from './WebDatePickerModal';
+import WebDrawer from './web/WebDrawer';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
 import { LEARNED_DETAIL_KEYS } from '@/constants/subcategories';
 import { getCategoryById } from '@/constants/theme';
 import { useAccountsContext } from '@/store/AccountsContext';
@@ -76,6 +79,8 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   const [paymentType,     setPaymentType]     = useState<PaymentType>(null);
   const [paymentSourceId, setPaymentSourceId] = useState<string | null>(null);
   const [sheetOpen,       setSheetOpen]       = useState(false);
+  const [webVisible,      setWebVisible]      = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   useEffect(() => {
     if (sheetOpen) {
@@ -83,6 +88,13 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
       setPaymentSourceId(defaultPayment.sourceId);
     }
   }, [sheetOpen, defaultPayment.type, defaultPayment.sourceId]);
+
+  // BottomSheet's onChange doesn't fire on web (it isn't rendered there) —
+  // mirror webVisible into the same sheetOpen state so the payment-default
+  // effect above still runs when the web drawer opens.
+  useEffect(() => {
+    if (Platform.OS === 'web') setSheetOpen(webVisible);
+  }, [webVisible]);
 
   const dateObj = new Date(date + 'T00:00:00');
   const cat     = getCategoryById(category);
@@ -214,23 +226,12 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
     sheetRef.current?.close();
   };
 
-  return (
+  const formContent = (
     <>
-      <BottomSheet
-        ref={sheetRef}
-        index={-1}
-        snapPoints={snapPoints}
-        enablePanDownToClose
-        backdropComponent={renderBackdrop}
-        backgroundStyle={{ backgroundColor: C.bg }}
-        handleIndicatorStyle={{ backgroundColor: C.outline }}
-        onChange={(index) => setSheetOpen(index >= 0)}>
-        <BottomSheetScrollView
-          contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-
-          <Text style={styles.sheetTitle}>Add Expense</Text>
+      {/* WebDrawer already shows "Add Expense" in its own header — this
+          in-content title is only needed on native, where BottomSheet has
+          no header chrome of its own. */}
+      {Platform.OS !== 'web' && <Text style={styles.sheetTitle}>Add Expense</Text>}
 
           {/* Amount */}
           <View style={styles.amountRow}>
@@ -415,6 +416,13 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
               </Pressable>
             </Modal>
           )}
+          <WebDatePickerModal
+            visible={showDatePicker && Platform.OS === 'web'}
+            date={date}
+            maxDate={new Date().toISOString().split('T')[0]}
+            onSelect={(d) => { setDate(d); setShowDatePicker(false); }}
+            onClose={() => setShowDatePicker(false)}
+          />
 
           {/* Save */}
           <TouchableOpacity
@@ -425,9 +433,33 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
             <MaterialCommunityIcons name="check" size={20} color={C.onPrim} />
             <Text style={styles.saveBtnText}>Save Expense</Text>
           </TouchableOpacity>
+    </>
+  );
 
-        </BottomSheetScrollView>
-      </BottomSheet>
+  return (
+    <>
+      {Platform.OS === 'web' ? (
+        <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Add Expense">
+          {formContent}
+        </WebDrawer>
+      ) : (
+        <BottomSheet
+          ref={sheetRef}
+          index={-1}
+          snapPoints={snapPoints}
+          enablePanDownToClose
+          backdropComponent={renderBackdrop}
+          backgroundStyle={{ backgroundColor: C.bg }}
+          handleIndicatorStyle={{ backgroundColor: C.outline }}
+          onChange={(index) => setSheetOpen(index >= 0)}>
+          <BottomSheetScrollView
+            contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            {formContent}
+          </BottomSheetScrollView>
+        </BottomSheet>
+      )}
 
       <CategoryPickerSheet
         sheetRef={categorySheetRef}
@@ -456,17 +488,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.surface,
     borderRadius: 20,
-    paddingVertical: 18,
+    paddingVertical: Platform.OS === 'web' ? 14 : 18,
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: Platform.OS === 'web' ? 28 : 24,
     borderWidth: 1,
     borderColor: C.border,
     gap: 6,
   },
-  currencySymbol: { color: C.primary, fontSize: 32, fontWeight: '700' },
+  currencySymbol: { color: C.primary, fontSize: Platform.OS === 'web' ? 22 : 32, fontWeight: '700' },
   amountInput: {
     color: C.text,
-    fontSize: 48,
+    fontSize: Platform.OS === 'web' ? 32 : 48,
     fontWeight: '800',
     letterSpacing: -1,
     minWidth: 100,
@@ -480,7 +512,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 8,
-    marginTop: 4,
+    marginTop: Platform.OS === 'web' ? 20 : 4,
   },
   optional: { color: C.outline, textTransform: 'none', fontWeight: '400' },
 
@@ -488,12 +520,12 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
-    marginBottom: 18,
+    marginBottom: Platform.OS === 'web' ? 22 : 18,
   },
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
 
@@ -503,22 +535,24 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 10 : 14,
     borderWidth: 1,
     borderColor: C.border,
     gap: 12,
-    marginBottom: 18,
+    marginBottom: Platform.OS === 'web' ? 22 : 18,
   },
   catIconWrap: {
-    width: 40, height: 40, borderRadius: 20,
+    width: Platform.OS === 'web' ? 32 : 40,
+    height: Platform.OS === 'web' ? 32 : 40,
+    borderRadius: Platform.OS === 'web' ? 16 : 20,
     alignItems: 'center', justifyContent: 'center',
   },
-  catLabel: { fontSize: 16, fontWeight: '600' },
+  catLabel: { fontSize: Platform.OS === 'web' ? 14 : 16, fontWeight: '600' },
 
   paymentToggle: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: Platform.OS === 'web' ? 22 : 12,
   },
   paymentTypeBtn: {
     flex: 1,
@@ -556,7 +590,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 24,
+    marginBottom: Platform.OS === 'web' ? 28 : 24,
+    marginTop: Platform.OS === 'web' ? 4 : 0,
     alignSelf: 'flex-start',
   },
   dateText: { fontSize: 13 },

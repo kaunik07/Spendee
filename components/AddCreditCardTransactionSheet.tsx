@@ -1,9 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Keyboard, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { BankAccount } from '@/store/useAccounts';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:        '#1C1B23',
@@ -31,6 +33,8 @@ interface Props {
 export default function AddCreditCardTransactionSheet({ sheetRef, accounts, onSave }: Props) {
   const snapPoints     = useMemo(() => ['75%'], []);
   const keyboardHeight = useKeyboardHeight();
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const [type,           setType]          = useState<TxnType>('charge');
   const [amount,         setAmount]        = useState('');
@@ -66,6 +70,129 @@ export default function AddCreditCardTransactionSheet({ sheetRef, accounts, onSa
   const accent   = isCharge ? C.charge : C.payment;
   const onAccent = isCharge ? C.onCharge : C.onPayment;
 
+  const formContent = (
+    <>
+      {/* Type toggle */}
+      <View style={styles.typeToggle}>
+        <TouchableOpacity
+          style={[styles.typeBtn, isCharge && { backgroundColor: C.charge }]}
+          onPress={() => handleTypeChange('charge')}
+          activeOpacity={0.8}>
+          <MaterialCommunityIcons
+            name="credit-card-outline"
+            size={18}
+            color={isCharge ? C.onCharge : C.outline}
+          />
+          <Text style={[styles.typeBtnText, isCharge && { color: C.onCharge }]}>
+            New Charge
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.typeBtn, !isCharge && { backgroundColor: C.payment }]}
+          onPress={() => handleTypeChange('payment')}
+          activeOpacity={0.8}>
+          <MaterialCommunityIcons
+            name="cash-check"
+            size={18}
+            color={!isCharge ? C.onPayment : C.outline}
+          />
+          <Text style={[styles.typeBtnText, !isCharge && { color: C.onPayment }]}>
+            Card Payment
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Amount */}
+      <View style={[styles.amountRow, { borderColor: accent + '60' }]}>
+        <Text style={[styles.currency, { color: accent }]}>$</Text>
+        <TextInput
+          style={[styles.amountInput, { color: accent }]}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={amount}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
+          selectionColor={accent}
+        />
+      </View>
+
+      {/* Bank account picker — only for payments */}
+      {!isCharge && accounts.length > 0 && (
+        <>
+          <Text style={styles.label}>
+            Paid from <Text style={styles.optional}>(optional)</Text>
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.accountsRow}
+            keyboardShouldPersistTaps="handled">
+            {accounts.map((acc) => {
+              const selected = bankAccountId === acc.id;
+              return (
+                <TouchableOpacity
+                  key={acc.id}
+                  style={[styles.accountChip, selected && styles.accountChipSelected]}
+                  onPress={() => setBankAccountId(selected ? null : acc.id)}
+                  activeOpacity={0.75}>
+                  <View style={[styles.chipDot, { backgroundColor: selected ? C.bankBlue : C.outline }]} />
+                  <View>
+                    <Text style={[styles.chipName, selected && { color: C.bankBlue }]}>
+                      {acc.name}
+                    </Text>
+                    <Text style={styles.chipBalance}>${acc.balance.toFixed(2)}</Text>
+                  </View>
+                  {selected && (
+                    <MaterialCommunityIcons name="check-circle" size={16} color={C.bankBlue} style={{ marginLeft: 4 }} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </>
+      )}
+
+      {/* Note */}
+      <Text style={styles.label}>
+        Note <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <TextInput
+        style={styles.input}
+        placeholder={isCharge ? 'e.g. Amazon, Dinner, Flights...' : 'e.g. Monthly payment, Full payoff...'}
+        placeholderTextColor={C.outline}
+        value={note}
+        onChangeText={setNote}
+        maxLength={100}
+        returnKeyType="done"
+        onSubmitEditing={handleSave}
+        selectionColor={accent}
+      />
+
+      <TouchableOpacity
+        style={[styles.saveBtn, { backgroundColor: accent }, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        activeOpacity={0.85}
+        disabled={!canSave}>
+        <MaterialCommunityIcons
+          name={isCharge ? 'credit-card-outline' : 'cash-check'}
+          size={20}
+          color={onAccent}
+        />
+        <Text style={[styles.saveBtnText, { color: onAccent }]}>
+          {isCharge ? 'Record Charge' : 'Record Payment'}
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Card Transaction">
+        {formContent}
+      </WebDrawer>
+    );
+  }
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -79,118 +206,7 @@ export default function AddCreditCardTransactionSheet({ sheetRef, accounts, onSa
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        {/* Type toggle */}
-        <View style={styles.typeToggle}>
-          <TouchableOpacity
-            style={[styles.typeBtn, isCharge && { backgroundColor: C.charge }]}
-            onPress={() => handleTypeChange('charge')}
-            activeOpacity={0.8}>
-            <MaterialCommunityIcons
-              name="credit-card-outline"
-              size={18}
-              color={isCharge ? C.onCharge : C.outline}
-            />
-            <Text style={[styles.typeBtnText, isCharge && { color: C.onCharge }]}>
-              New Charge
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.typeBtn, !isCharge && { backgroundColor: C.payment }]}
-            onPress={() => handleTypeChange('payment')}
-            activeOpacity={0.8}>
-            <MaterialCommunityIcons
-              name="cash-check"
-              size={18}
-              color={!isCharge ? C.onPayment : C.outline}
-            />
-            <Text style={[styles.typeBtnText, !isCharge && { color: C.onPayment }]}>
-              Card Payment
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Amount */}
-        <View style={[styles.amountRow, { borderColor: accent + '60' }]}>
-          <Text style={[styles.currency, { color: accent }]}>$</Text>
-          <TextInput
-            style={[styles.amountInput, { color: accent }]}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={amount}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setAmount(t); }}
-            selectionColor={accent}
-          />
-        </View>
-
-        {/* Bank account picker — only for payments */}
-        {!isCharge && accounts.length > 0 && (
-          <>
-            <Text style={styles.label}>
-              Paid from <Text style={styles.optional}>(optional)</Text>
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.accountsRow}
-              keyboardShouldPersistTaps="handled">
-              {accounts.map((acc) => {
-                const selected = bankAccountId === acc.id;
-                return (
-                  <TouchableOpacity
-                    key={acc.id}
-                    style={[styles.accountChip, selected && styles.accountChipSelected]}
-                    onPress={() => setBankAccountId(selected ? null : acc.id)}
-                    activeOpacity={0.75}>
-                    <View style={[styles.chipDot, { backgroundColor: selected ? C.bankBlue : C.outline }]} />
-                    <View>
-                      <Text style={[styles.chipName, selected && { color: C.bankBlue }]}>
-                        {acc.name}
-                      </Text>
-                      <Text style={styles.chipBalance}>${acc.balance.toFixed(2)}</Text>
-                    </View>
-                    {selected && (
-                      <MaterialCommunityIcons name="check-circle" size={16} color={C.bankBlue} style={{ marginLeft: 4 }} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </>
-        )}
-
-        {/* Note */}
-        <Text style={styles.label}>
-          Note <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <TextInput
-          style={styles.input}
-          placeholder={isCharge ? 'e.g. Amazon, Dinner, Flights...' : 'e.g. Monthly payment, Full payoff...'}
-          placeholderTextColor={C.outline}
-          value={note}
-          onChangeText={setNote}
-          maxLength={100}
-          returnKeyType="done"
-          onSubmitEditing={handleSave}
-          selectionColor={accent}
-        />
-
-        <TouchableOpacity
-          style={[styles.saveBtn, { backgroundColor: accent }, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          activeOpacity={0.85}
-          disabled={!canSave}>
-          <MaterialCommunityIcons
-            name={isCharge ? 'credit-card-outline' : 'cash-check'}
-            size={20}
-            color={onAccent}
-          />
-          <Text style={[styles.saveBtnText, { color: onAccent }]}>
-            {isCharge ? 'Record Charge' : 'Record Payment'}
-          </Text>
-        </TouchableOpacity>
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -226,15 +242,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.surface,
     borderRadius: 20,
-    paddingVertical: 18,
+    paddingVertical: Platform.OS === 'web' ? 14 : 18,
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: Platform.OS === 'web' ? 28 : 24,
     borderWidth: 1.5,
     gap: 4,
   },
-  currency: { fontSize: 32, fontWeight: '700' },
+  currency: { fontSize: Platform.OS === 'web' ? 22 : 32, fontWeight: '700' },
   amountInput: {
-    fontSize: 48,
+    fontSize: Platform.OS === 'web' ? 32 : 48,
     fontWeight: '800',
     letterSpacing: -1,
     minWidth: 100,
@@ -275,9 +291,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
     marginBottom: 24,

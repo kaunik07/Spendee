@@ -1,9 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
+import { useWebSheetBridge } from '@/lib/webSheetBridge';
+import WebDrawer from './web/WebDrawer';
 
 const C = {
   bg:      '#1C1B23',
@@ -24,6 +26,8 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
   const { addCard }    = useCreditCardsContext();
   const snapPoints     = useMemo(() => ['70%'], []);
   const keyboardHeight = useKeyboardHeight();
+  const [webVisible, setWebVisible] = useState(false);
+  useWebSheetBridge(sheetRef, setWebVisible);
 
   const [name,         setName]         = useState('');
   const [limitRaw,     setLimitRaw]     = useState('');
@@ -57,6 +61,103 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
     sheetRef.current?.close();
   };
 
+  const formContent = (
+    <>
+      {Platform.OS !== 'web' && <Text style={styles.title}>Add Credit Card</Text>}
+
+      {/* Card name */}
+      <Text style={styles.label}>Card name</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="e.g. Chase Sapphire, Amex Gold..."
+        placeholderTextColor={C.outline}
+        value={name}
+        onChangeText={setName}
+        maxLength={60}
+        returnKeyType="next"
+        selectionColor={C.primary}
+      />
+
+      {/* Credit limit */}
+      <Text style={styles.label}>
+        Credit limit <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <View style={styles.amountInputRow}>
+        <Text style={styles.currencySymbol}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={limitRaw}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setLimitRaw(t); }}
+          returnKeyType="next"
+          selectionColor={C.primary}
+        />
+      </View>
+
+      {/* Current outstanding balance */}
+      <Text style={styles.label}>
+        Current outstanding balance <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <Text style={styles.hint}>
+        Enter the amount you currently owe on this card.
+      </Text>
+      <View style={styles.amountInputRow}>
+        <Text style={styles.currencySymbol}>$</Text>
+        <TextInput
+          style={styles.amountInput}
+          placeholder="0.00"
+          placeholderTextColor={C.outline}
+          keyboardType="decimal-pad"
+          value={balanceRaw}
+          onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setBalanceRaw(t); }}
+          returnKeyType="next"
+          selectionColor={C.primary}
+        />
+      </View>
+
+      {/* Payment due day */}
+      <Text style={styles.label}>
+        Payment due day <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <Text style={styles.hint}>
+        Day of the month your payment is due (1–31). Used for reminders.
+      </Text>
+      <View style={styles.amountInputRow}>
+        <MaterialCommunityIcons name="calendar-clock" size={18} color={C.textSec} style={{ marginRight: 6 }} />
+        <TextInput
+          style={styles.amountInput}
+          placeholder="e.g. 15"
+          placeholderTextColor={C.outline}
+          keyboardType="number-pad"
+          value={billingRaw}
+          onChangeText={(t) => { if (/^\d{0,2}$/.test(t)) setBillingRaw(t); }}
+          returnKeyType="done"
+          onSubmitEditing={handleSave}
+          selectionColor={C.primary}
+        />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        activeOpacity={0.85}
+        disabled={!canSave}>
+        <MaterialCommunityIcons name="credit-card-plus-outline" size={20} color={C.onPrim} />
+        <Text style={styles.saveBtnText}>Add Card</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <WebDrawer visible={webVisible} onClose={() => setWebVisible(false)} title="Add Credit Card">
+        {formContent}
+      </WebDrawer>
+    );
+  }
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -70,92 +171,7 @@ export default function AddCreditCardSheet({ sheetRef }: Props) {
         contentContainerStyle={[styles.container, { paddingBottom: keyboardHeight || 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        <Text style={styles.title}>Add Credit Card</Text>
-
-        {/* Card name */}
-        <Text style={styles.label}>Card name</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Chase Sapphire, Amex Gold..."
-          placeholderTextColor={C.outline}
-          value={name}
-          onChangeText={setName}
-          maxLength={60}
-          returnKeyType="next"
-          selectionColor={C.primary}
-        />
-
-        {/* Credit limit */}
-        <Text style={styles.label}>
-          Credit limit <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <View style={styles.amountInputRow}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={limitRaw}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setLimitRaw(t); }}
-            returnKeyType="next"
-            selectionColor={C.primary}
-          />
-        </View>
-
-        {/* Current outstanding balance */}
-        <Text style={styles.label}>
-          Current outstanding balance <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <Text style={styles.hint}>
-          Enter the amount you currently owe on this card.
-        </Text>
-        <View style={styles.amountInputRow}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="0.00"
-            placeholderTextColor={C.outline}
-            keyboardType="decimal-pad"
-            value={balanceRaw}
-            onChangeText={(t) => { if (/^\d*\.?\d{0,2}$/.test(t)) setBalanceRaw(t); }}
-            returnKeyType="next"
-            selectionColor={C.primary}
-          />
-        </View>
-
-        {/* Payment due day */}
-        <Text style={styles.label}>
-          Payment due day <Text style={styles.optional}>(optional)</Text>
-        </Text>
-        <Text style={styles.hint}>
-          Day of the month your payment is due (1–31). Used for reminders.
-        </Text>
-        <View style={styles.amountInputRow}>
-          <MaterialCommunityIcons name="calendar-clock" size={18} color={C.textSec} style={{ marginRight: 6 }} />
-          <TextInput
-            style={styles.amountInput}
-            placeholder="e.g. 15"
-            placeholderTextColor={C.outline}
-            keyboardType="number-pad"
-            value={billingRaw}
-            onChangeText={(t) => { if (/^\d{0,2}$/.test(t)) setBillingRaw(t); }}
-            returnKeyType="done"
-            onSubmitEditing={handleSave}
-            selectionColor={C.primary}
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-          onPress={handleSave}
-          activeOpacity={0.85}
-          disabled={!canSave}>
-          <MaterialCommunityIcons name="credit-card-plus-outline" size={20} color={C.onPrim} />
-          <Text style={styles.saveBtnText}>Add Card</Text>
-        </TouchableOpacity>
-
+        {formContent}
       </BottomSheetScrollView>
     </BottomSheet>
   );
@@ -179,6 +195,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
     marginBottom: 8,
+    marginTop: Platform.OS === 'web' ? 18 : 0,
   },
   optional: { color: C.outline, textTransform: 'none', fontWeight: '400' },
   hint: {
@@ -192,9 +209,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
     color: C.text,
-    fontSize: 16,
+    fontSize: Platform.OS === 'web' ? 14 : 16,
     borderWidth: 1,
     borderColor: C.border,
     marginBottom: 20,
@@ -216,7 +233,7 @@ const styles = StyleSheet.create({
     color: C.text,
     fontSize: 18,
     fontWeight: '600',
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 14,
   },
 
   saveBtn: {
