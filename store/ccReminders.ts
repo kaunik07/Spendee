@@ -1,14 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
+import { Platform } from 'react-native';
 import { CreditCard } from './useCreditCards';
 import { nextDueDate, daysUntil, toDateStr, dueLabel } from '@/lib/billing';
 
 // expo-notifications' functionality was removed from Expo Go (SDK 53+), where
 // merely importing/using it throws. Load it only outside Expo Go (dev/standalone
-// builds); in Expo Go the app runs fine, just without local reminders.
+// builds); in Expo Go the app runs fine, just without local reminders. These
+// are locally-scheduled device notifications with no server-push equivalent,
+// so they're skipped on web too (v1 scope: CC due-date reminders are
+// mobile-only — everything else about credit cards is unaffected).
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 const Notifications: typeof import('expo-notifications') | null =
-  isExpoGo ? null : require('expo-notifications');
+  (isExpoGo || Platform.OS === 'web') ? null : require('expo-notifications');
 
 // Show notifications even while the app is foregrounded.
 if (Notifications) {

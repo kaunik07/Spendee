@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import * as LocalAuthentication from 'expo-local-authentication';
-import * as SecureStore from 'expo-secure-store';
 import { useCallback, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
+import * as SecureStore from '@/lib/secureStorage';
 import { supabase } from '@/lib/supabase';
 import { StorageMode, getStorageMode, setStorageMode, clearStorageMode } from './storageMode';
 import { migrateLocalDataToCloud } from './migrateToCloud';
@@ -77,6 +78,14 @@ function toUser(u: LocalUser): User {
   return { id: u.id, username: u.username, biometricEnabled: u.biometricEnabled, createdAt: u.createdAt };
 }
 
+// On native, resumes/creates the on-device guest so the app stays usable
+// with no auth wall. On web there is no guest mode — returns null so the
+// caller ends up signed out and AuthGuard sends the user to /login.
+async function landOnGuest(): Promise<User | null> {
+  if (Platform.OS === 'web') return null;
+  return ensureGuestUser();
+}
+
 // Find or create the single on-device guest user and make it the active
 // local session. Guest ids are prefixed `guest_` so they're distinguishable.
 async function ensureGuestUser(): Promise<User> {
@@ -115,35 +124,72 @@ export function useAuth() {
 
     (async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          // Restore the account instantly from the cached profile so the UI and
-          // the Face ID lock appear without waiting on the network. After a long
-          // sleep the token refresh can be slow/hang, and blocking on it here is
-          // what left the app showing "??" with no data and no biometric prompt.
-          const cachedRaw = await SecureStore.getItemAsync(LAST_USER_KEY);
-          const cached = cachedRaw ? (JSON.parse(cachedRaw) as User) : null;
-          if (cached && cached.id === session.user.id) {
-            await setStorageMode('online');
-            if (!active) return;
-            setMode('online');
-            setUser(cached);
-            if (cached.biometricEnabled) setRequiresBiometric(true);
-            // Best-effort background refresh; NEVER sign out on failure — a
-            // transient network error must not drop a real account.
-            fetchProfile(session.user.id)
-              .then((p) => {
+        // Read LOCAL state first — no network. This is what makes a returning
+        // user's data + Face ID appear instantly. `supabase.auth.getSession()`
+        // makes a network call to refresh an expired token (slow/hangs after a
+        // long sleep), so it must NOT gate the UI — that was the "??" bug.
+        const mode = await getStorageMode();
+        const cachedRaw = await SecureStore.getItemAsync(LAST_USER_KEY);
+        const cached = cachedRaw ? (JSON.parse(cachedRaw) as User) : null;
+
+        // ── Returning online account: restore from cache, validate in background.
+        if (mode === 'online' && cached && !cached.id.startsWith('guest_')) {
+          if (!active) return;
+          setMode('online');
+          setUser(cached);
+          // Biometric is native-only — a mobile account's biometricEnabled
+          // flag must not lock the user out on web (authenticateAsync throws
+          // there; expo-local-authentication has no web implementation).
+          if (cached.biometricEnabled && Platform.OS !== 'web') setRequiresBiometric(true);
+          setIsLoading(false);
+          // Background refresh of session + profile; NEVER sign out on failure —
+          // a transient network error must not drop a real account.
+          (async () => {
+            try {
+              const { data: { session } } = await supabase.auth.getSession();
+              if (session && active) {
+                const p = await fetchProfile(session.user.id);
                 if (p && active) {
                   setUser(p);
                   setLastUser(p);
-                  SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(p));
+                  await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(p));
                 }
-              })
-              .catch(() => { /* offline — keep the cached session */ });
-            return;
-          }
+              }
+            } catch { /* offline — keep the cached session */ }
+          })();
+          return;
+        }
 
-          // No usable cache — fetch the profile (blocking) this once.
+        // ── Local / guest: resume the on-device session, or create a guest.
+        // Guest mode is native-only (see landOnGuest) — on web this whole
+        // branch is skipped so a stray/cross-platform 'local' mode value
+        // just falls through to the no-cached-account check below.
+        if (mode === 'local' && Platform.OS !== 'web') {
+          const sessionRaw = await AsyncStorage.getItem(LOCAL_SESSION_KEY);
+          if (sessionRaw) {
+            const { userId } = JSON.parse(sessionRaw);
+            const found = (await localGetUsers()).find((u) => u.id === userId);
+            if (found) {
+              if (!active) return;
+              setMode('local');
+              setUser(toUser(found));
+              // Only real (password) local accounts use biometric; guests don't.
+              if (found.biometricEnabled && !found.id.startsWith('guest_')) setRequiresBiometric(true);
+              return;
+            }
+          }
+          const guest = await ensureGuestUser();
+          if (!active) return;
+          setMode('local');
+          setUser(guest);
+          return;
+        }
+
+        // ── No cached account (fresh install, or cache cleared while a Supabase
+        // session survived): check for a session once, else land on a guest
+        // (native) or stay signed-out so AuthGuard routes to /login (web).
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
           const profile = await fetchProfile(session.user.id);
           if (profile) {
             await setStorageMode('online');
@@ -152,38 +198,18 @@ export function useAuth() {
             setUser(profile);
             setLastUser(profile);
             await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(profile));
-            if (profile.biometricEnabled) setRequiresBiometric(true);
-            return;
-          }
-          // Session but no profile and no cache — likely offline. Keep the
-          // session and fall through to a usable guest; next launch retries.
-        }
-
-        // No online session → resume the local/guest session, or create a guest.
-        const mode = await getStorageMode();
-        const sessionRaw = await AsyncStorage.getItem(LOCAL_SESSION_KEY);
-        if (mode === 'local' && sessionRaw) {
-          const { userId } = JSON.parse(sessionRaw);
-          const found = (await localGetUsers()).find((u) => u.id === userId);
-          if (found) {
-            if (!active) return;
-            setMode('local');
-            setUser(toUser(found));
-            await SecureStore.setItemAsync(LAST_USER_KEY, JSON.stringify(toUser(found)));
-            // Only real (password) local accounts use biometric; guests don't.
-            if (found.biometricEnabled && !found.id.startsWith('guest_')) setRequiresBiometric(true);
+            if (profile.biometricEnabled && Platform.OS !== 'web') setRequiresBiometric(true);
             return;
           }
         }
-
-        const guest = await ensureGuestUser();
+        const guest = await landOnGuest();
         if (!active) return;
-        setMode('local');
+        setMode(guest ? 'local' : null);
         setUser(guest);
       } catch (_) {
         try {
-          const guest = await ensureGuestUser();
-          if (active) { setMode('local'); setUser(guest); }
+          const guest = await landOnGuest();
+          if (active) { setMode(guest ? 'local' : null); setUser(guest); }
         } catch { /* give up — safety timer unblocks the UI */ }
       } finally {
         if (active) setIsLoading(false);
@@ -271,6 +297,7 @@ export function useAuth() {
 
   // ── Biometric unlock (lock screen — session still active) ─
   const unlockWithBiometric = useCallback(async (): Promise<{ error?: string }> => {
+    if (Platform.OS === 'web') return { error: 'Biometric login is not available on web' };
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: 'Unlock Spendee',
       cancelLabel:   'Use Password',
@@ -283,6 +310,7 @@ export function useAuth() {
 
   // ── Biometric re-login (after explicit logout) ────────────
   const loginWithBiometric = useCallback(async (): Promise<{ error?: string }> => {
+    if (Platform.OS === 'web') return { error: 'Biometric login is not available on web' };
     const mode = await getStorageMode();
 
     if (mode === 'local') {
@@ -346,9 +374,9 @@ export function useAuth() {
       }
       await supabase.auth.signOut();
     }
-    const guest = await ensureGuestUser();
+    const guest = await landOnGuest();
     setUser(guest);
-    setMode('local');
+    setMode(guest ? 'local' : null);
     setRequiresBiometric(false);
   }, [user]);
 
@@ -392,11 +420,12 @@ export function useAuth() {
       await supabase.auth.signOut();
     }
 
-    // Return to a fresh guest session so the app stays usable.
-    const guest = await ensureGuestUser();
+    // Return to a fresh guest session so the app stays usable (native) or
+    // leave signed-out so AuthGuard routes to /login (web).
+    const guest = await landOnGuest();
     setUser(guest);
     setLastUser(null);
-    setMode('local');
+    setMode(guest ? 'local' : null);
     setRequiresBiometric(false);
     return {};
   }, [user]);
@@ -404,6 +433,7 @@ export function useAuth() {
   // ── Toggle biometric ──────────────────────────────────────
   const toggleBiometric = useCallback(async (): Promise<{ error?: string }> => {
     if (!user) return { error: 'Not logged in' };
+    if (Platform.OS === 'web') return { error: 'Biometric login is not available on web' };
 
     if (!user.biometricEnabled) {
       const [supported, enrolled] = await Promise.all([
@@ -463,12 +493,13 @@ export function useAuth() {
       SecureStore.deleteItemAsync(LAST_USER_KEY),
     ]);
     try { await supabase.auth.signOut(); } catch { /* no session to sign out of */ }
-    // Land on a fresh guest so the app stays usable after a reset.
-    const guest = await ensureGuestUser();
+    // Land on a fresh guest so the app stays usable after a reset (native),
+    // or leave signed-out so AuthGuard routes to /login (web).
+    const guest = await landOnGuest();
     setUser(guest);
     setLastUser(null);
     setRequiresBiometric(false);
-    setMode('local');
+    setMode(guest ? 'local' : null);
   }, []);
 
   const isGuest = (user?.id ?? '').startsWith('guest_');

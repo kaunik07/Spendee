@@ -3,7 +3,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useSegments, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/theme';
@@ -85,9 +85,18 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
     const inAuthScreen = segments[0] === 'login' || segments[0] === 'signup';
 
-    // The app is always usable as a guest, so there's no auth wall. We only
-    // bounce a signed-in (real, non-guest) account away from the login/signup
-    // screens — guests may freely visit them to log in or create an account.
+    // Web has no guest mode — a real account is required before any app
+    // content shows. Bounce a signed-out web user straight to /login.
+    if (Platform.OS === 'web' && !user && !inAuthScreen) {
+      router.replace('/login');
+      return;
+    }
+
+    // Native: the app is always usable as a guest, so there's no auth wall.
+    // We only bounce a signed-in (real, non-guest) account away from the
+    // login/signup screens — guests may freely visit them to log in or
+    // create an account. (On web `isGuest` is never true, so this also
+    // covers bouncing a logged-in web user away from /login and /signup.)
     if (user && !isGuest && !requiresBiometric && inAuthScreen) {
       router.replace('/(tabs)');
     }
