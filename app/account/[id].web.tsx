@@ -6,6 +6,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import AddAccountTransactionSheet from '@/components/AddAccountTransactionSheet';
+import EditAccountTxnDrawer from '@/components/web/EditAccountTxnDrawer';
 import WebPanel from '@/components/web/WebPanel';
 import WebStatCard from '@/components/web/WebStatCard';
 import { Colors } from '@/constants/theme';
@@ -39,6 +40,9 @@ export default function AccountDetailScreenWeb() {
   const account = accounts.find((a) => a.id === id);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
+  // Transactions are edited in the right-side drawer, matching how they're
+  // added — no navigation away from the account.
+  const [editingTxn, setEditingTxn] = useState<AccountTransaction | null>(null);
 
   const startRename = () => { setEditName(account?.name ?? ''); setIsEditing(true); };
   const confirmRename = async () => {
@@ -138,7 +142,7 @@ export default function AccountDetailScreenWeb() {
                 const isDeposit = txn.type === 'deposit';
                 const color = isDeposit ? DEPOSIT_COLOR : WITHDRAW_COLOR;
                 return (
-                  <Pressable key={txn.id} style={styles.row} onPress={() => router.push(`/edit-account-txn/${txn.id}?accountId=${id}`)}>
+                  <Pressable key={txn.id} style={styles.row} onPress={() => setEditingTxn(txn)}>
                     <View style={[styles.rowIcon, { backgroundColor: color + '18' }]}>
                       <MaterialCommunityIcons name={isDeposit ? 'arrow-down-circle-outline' : 'arrow-up-circle-outline'} size={18} color={color} />
                     </View>
@@ -159,6 +163,13 @@ export default function AccountDetailScreenWeb() {
       </WebPanel>
 
       <AddAccountTransactionSheet sheetRef={sheetRef} onSave={handleSave} />
+      <EditAccountTxnDrawer
+        txn={editingTxn}
+        accountId={id}
+        visible={editingTxn !== null}
+        onClose={() => setEditingTxn(null)}
+        onSaved={refresh}
+      />
     </View>
   );
 }
