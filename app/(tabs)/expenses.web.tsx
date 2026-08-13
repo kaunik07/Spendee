@@ -5,10 +5,11 @@
 // components/AddExpenseSheet.tsx).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet from '@gorhom/bottom-sheet';
-import { useRouter } from 'expo-router';
 import React, { useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import AddExpenseSheet from '@/components/AddExpenseSheet';
+import WebDatePickerModal from '@/components/WebDatePickerModal';
+import EditExpenseDrawer from '@/components/web/EditExpenseDrawer';
 import WebDrawer from '@/components/web/WebDrawer';
 import WebPanel from '@/components/web/WebPanel';
 import { getSubcategoryById } from '@/constants/subcategories';
@@ -19,18 +20,39 @@ import { Expense } from '@/store/useExpenses';
 
 const PENDING_AMBER = '#FFB74D';
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_ABBR  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+function toDateStr(d: Date) { return d.toISOString().split('T')[0]; }
+function todayStr() { return toDateStr(new Date()); }
+function daysAgoStr(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return toDateStr(d); }
+function monthsAgoStr(n: number) { const d = new Date(); d.setMonth(d.getMonth() - n); return toDateStr(d); }
+function formatShort(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('default', { month: 'short', day: 'numeric' });
+}
 function formatGroupDate(dateStr: string) {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+type DatePresetKey = '7d' | '30d' | '1m' | '3m';
+type DateRangeMode = 'all' | 'preset' | 'month' | 'custom';
+
+const DATE_PRESETS: { key: DatePresetKey; label: string; shortLabel: string; days?: number; months?: number }[] = [
+  { key: '7d',  label: '7 days',   shortLabel: 'Last 7 days',   days: 7 },
+  { key: '30d', label: '30 days',  shortLabel: 'Last 30 days',  days: 30 },
+  { key: '1m',  label: '1 month',  shortLabel: 'Last month',    months: 1 },
+  { key: '3m',  label: '3 months', shortLabel: 'Last 3 months', months: 3 },
+];
+
 export default function ExpensesScreenWeb() {
   const sheetRef = useRef<BottomSheet>(null);
-  const router = useRouter();
   const { expenses, pendingCount, syncing } = useExpenseContext();
   const { deleteExpenseWithReversal } = useExpenseActions();
   const today = todayStr();
+
+  // Editing happens in the right-side drawer (same chrome as Add Expense)
+  // rather than navigating to a separate page.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
@@ -40,7 +62,52 @@ export default function ExpensesScreenWeb() {
     setFilterCategories((prev) => prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]);
   };
 
+  // ── Date range filter (All time by default — doesn't hide anything
+  // unless the user actively picks a range) ──
   const now = new Date();
+  const [dateRangeMode, setDateRangeMode] = useState<DateRangeMode>('all');
+  const [datePresetKey, setDatePresetKey] = useState<DatePresetKey>('30d');
+  const [dateSelectedMonth, setDateSelectedMonth] = useState(now.getMonth());
+  const [dateYear] = useState(now.getFullYear());
+  const [customStart, setCustomStart] = useState(daysAgoStr(29));
+  const [customEnd, setCustomEnd]     = useState(todayStr());
+
+  const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+  const [datePopoverPos, setDatePopoverPos]   = useState({ top: 0, left: 0 });
+  const [pickingCustom, setPickingCustom]     = useState<'start' | 'end' | null>(null);
+  const datePillRef = useRef<View>(null);
+
+  const openDatePopover = () => {
+    datePillRef.current?.measureInWindow((x, y, _w, height) => {
+      setDatePopoverPos({ top: y + height + 8, left: x });
+      setDatePopoverOpen(true);
+    });
+  };
+
+  const dateRange = useMemo(() => {
+    if (dateRangeMode === 'all') return null;
+    if (dateRangeMode === 'preset') {
+      const preset = DATE_PRESETS.find((p) => p.key === datePresetKey)!;
+      const s = preset.days ? daysAgoStr(preset.days - 1) : monthsAgoStr(preset.months!);
+      return { start: s, end: todayStr() };
+    }
+    if (dateRangeMode === 'month') {
+      const s = `${dateYear}-${String(dateSelectedMonth + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(dateYear, dateSelectedMonth + 1, 0).getDate();
+      const e = `${dateYear}-${String(dateSelectedMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      return { start: s, end: e };
+    }
+    return { start: customStart, end: customEnd };
+  }, [dateRangeMode, datePresetKey, dateSelectedMonth, dateYear, customStart, customEnd]);
+
+  const datePillLabel = dateRangeMode === 'all'
+    ? 'All time'
+    : dateRangeMode === 'preset'
+      ? DATE_PRESETS.find((p) => p.key === datePresetKey)!.shortLabel
+      : dateRangeMode === 'month'
+        ? `${MONTH_NAMES[dateSelectedMonth]} ${dateYear}`
+        : dateRange!.start === dateRange!.end ? formatShort(dateRange!.start) : `${formatShort(dateRange!.start)} – ${formatShort(dateRange!.end)}`;
+
   const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
   const monthTotal = expenses
     .filter((e) => {
@@ -49,10 +116,14 @@ export default function ExpensesScreenWeb() {
     })
     .reduce((s, e) => s + e.amount, 0);
 
-  const filteredExpenses = useMemo(
-    () => filterCategories.length > 0 ? expenses.filter((e) => filterCategories.includes(e.category)) : expenses,
-    [expenses, filterCategories]
-  );
+  const anyFilterActive = filterCategories.length > 0 || dateRangeMode !== 'all';
+
+  const filteredExpenses = useMemo(() => {
+    let result = expenses;
+    if (filterCategories.length > 0) result = result.filter((e) => filterCategories.includes(e.category));
+    if (dateRange) result = result.filter((e) => e.date >= dateRange.start && e.date <= dateRange.end);
+    return result;
+  }, [expenses, filterCategories, dateRange]);
 
   const grouped = useMemo(() => {
     const map: Record<string, Expense[]> = {};
@@ -81,6 +152,11 @@ export default function ExpensesScreenWeb() {
       )}
 
       <View style={styles.filterRow}>
+        <Pressable ref={datePillRef} style={styles.filterChip} onPress={openDatePopover}>
+          <MaterialCommunityIcons name="calendar-range" size={14} color={dateRangeMode !== 'all' ? Colors.primary : Colors.textSecondary} />
+          <Text style={[styles.filterChipText, dateRangeMode !== 'all' && { color: Colors.primary }]}>{datePillLabel}</Text>
+          <MaterialCommunityIcons name="chevron-down" size={13} color={dateRangeMode !== 'all' ? Colors.primary : Colors.textSecondary} />
+        </Pressable>
         <Pressable style={styles.filterChip} onPress={() => setFilterDrawerOpen(true)}>
           <MaterialCommunityIcons name="filter-variant" size={14} color={filterCategories.length > 0 ? Colors.primary : Colors.textSecondary} />
           <Text style={[styles.filterChipText, filterCategories.length > 0 && { color: Colors.primary }]}>
@@ -96,8 +172,8 @@ export default function ExpensesScreenWeb() {
             </Pressable>
           </View>
         ))}
-        {filterCategories.length > 0 && (
-          <Pressable onPress={() => setFilterCategories([])} hitSlop={8} style={styles.clearAllBtn}>
+        {anyFilterActive && (
+          <Pressable onPress={() => { setFilterCategories([]); setDateRangeMode('all'); }} hitSlop={8} style={styles.clearAllBtn}>
             <Text style={styles.clearAllText}>Clear all</Text>
           </Pressable>
         )}
@@ -105,11 +181,11 @@ export default function ExpensesScreenWeb() {
 
       <WebPanel
         title="Transactions"
-        linkLabel={filterCategories.length > 0 ? `${filteredExpenses.length} of ${expenses.length}` : `${expenses.length} total`}>
+        linkLabel={anyFilterActive ? `${filteredExpenses.length} of ${expenses.length}` : `${expenses.length} total`}>
         {expenses.length === 0 ? (
           <Text style={styles.emptyText}>No expenses yet — add your first one above.</Text>
         ) : filteredExpenses.length === 0 ? (
-          <Text style={styles.emptyText}>No expenses in the selected categories yet.</Text>
+          <Text style={styles.emptyText}>No expenses match the current filters.</Text>
         ) : (
           grouped.map(([date, items]) => {
             const isToday = date === today;
@@ -131,7 +207,7 @@ export default function ExpensesScreenWeb() {
                     item={item}
                     highlight={isToday}
                     onDelete={() => deleteExpenseWithReversal(item)}
-                    onOpen={() => router.push(`/edit-expense/${item.id}`)}
+                    onOpen={() => setEditingId(item.id)}
                   />
                 ))}
               </View>
@@ -141,6 +217,11 @@ export default function ExpensesScreenWeb() {
       </WebPanel>
 
       <AddExpenseSheet sheetRef={sheetRef} />
+      <EditExpenseDrawer
+        expenseId={editingId}
+        visible={editingId !== null}
+        onClose={() => setEditingId(null)}
+      />
       <WebDrawer visible={filterDrawerOpen} onClose={() => setFilterDrawerOpen(false)} title="Filter by category">
         <View style={styles.filterGrid}>
           {Categories.map((cat) => {
@@ -170,6 +251,76 @@ export default function ExpensesScreenWeb() {
           </Pressable>
         </View>
       </WebDrawer>
+
+      {/* Date-range popover — floats over the page (transparent Modal
+          positioned under the pill), doesn't push content down. */}
+      <Modal transparent visible={datePopoverOpen} animationType="fade" onRequestClose={() => setDatePopoverOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDatePopoverOpen(false)}>
+          <Pressable style={[styles.datePopover, { top: datePopoverPos.top, left: datePopoverPos.left }]} onPress={() => {}}>
+            <Pressable
+              style={[styles.presetChip, dateRangeMode === 'all' && styles.presetChipSelected, { marginBottom: 14 }]}
+              onPress={() => { setDateRangeMode('all'); setDatePopoverOpen(false); }}>
+              <Text style={[styles.presetChipText, dateRangeMode === 'all' && styles.presetChipTextSelected]}>All time</Text>
+            </Pressable>
+
+            <Text style={styles.popSectionLabel}>Quick range</Text>
+            <View style={styles.presetRow}>
+              {DATE_PRESETS.map((p) => {
+                const selected = dateRangeMode === 'preset' && datePresetKey === p.key;
+                return (
+                  <Pressable
+                    key={p.key}
+                    style={[styles.presetChip, selected && styles.presetChipSelected]}
+                    onPress={() => { setDateRangeMode('preset'); setDatePresetKey(p.key); setDatePopoverOpen(false); }}>
+                    <Text style={[styles.presetChipText, selected && styles.presetChipTextSelected]}>{p.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.popSectionLabel}>Or pick a month</Text>
+            <View style={styles.monthGrid}>
+              {MONTH_ABBR.map((label, m) => {
+                const selected = dateRangeMode === 'month' && dateSelectedMonth === m;
+                return (
+                  <Pressable
+                    key={label}
+                    style={[styles.monthChip, selected && styles.monthChipSelected]}
+                    onPress={() => { setDateRangeMode('month'); setDateSelectedMonth(m); setDatePopoverOpen(false); }}>
+                    <Text style={[styles.monthChipText, selected && styles.monthChipTextSelected]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.popSectionLabel}>Or a custom range</Text>
+            <View style={styles.customRow}>
+              <Pressable style={styles.dateInput} onPress={() => setPickingCustom('start')}>
+                <Text style={styles.dateInputText}>{formatShort(dateRangeMode === 'custom' ? customStart : daysAgoStr(29))}</Text>
+              </Pressable>
+              <MaterialCommunityIcons name="arrow-right" size={15} color={Colors.outline} />
+              <Pressable style={styles.dateInput} onPress={() => setPickingCustom('end')}>
+                <Text style={styles.dateInputText}>{formatShort(dateRangeMode === 'custom' ? customEnd : todayStr())}</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <WebDatePickerModal
+        visible={pickingCustom === 'start'}
+        date={customStart}
+        maxDate={customEnd}
+        onSelect={(d) => { setCustomStart(d); setDateRangeMode('custom'); setPickingCustom(null); }}
+        onClose={() => setPickingCustom(null)}
+      />
+      <WebDatePickerModal
+        visible={pickingCustom === 'end'}
+        date={customEnd}
+        maxDate={todayStr()}
+        onSelect={(d) => { setCustomEnd(d); setDateRangeMode('custom'); setPickingCustom(null); setDatePopoverOpen(false); }}
+        onClose={() => setPickingCustom(null)}
+      />
     </View>
   );
 }
@@ -266,4 +417,37 @@ const styles = StyleSheet.create({
 
   pendingChip: { backgroundColor: PENDING_AMBER + '22', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   pendingChipText: { color: PENDING_AMBER, fontSize: 9.5, fontWeight: '700' },
+
+  backdrop: { flex: 1 },
+  datePopover: {
+    position: 'absolute',
+    width: 440,
+    maxWidth: '92%',
+    backgroundColor: Colors.surfaceContainerHigh,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.4,
+    shadowRadius: 40,
+    elevation: 12,
+  },
+  popSectionLabel: { color: Colors.outline, fontSize: 10.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.05, marginBottom: 8 },
+  presetRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
+  presetChip: { flex: 1, alignItems: 'center', backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, paddingVertical: 9 },
+  presetChipSelected: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  presetChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  presetChipTextSelected: { color: Colors.onPrimary },
+
+  monthGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 18 },
+  monthChip: { width: '15%', alignItems: 'center', backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border, borderRadius: 9, paddingVertical: 8 },
+  monthChipSelected: { backgroundColor: Colors.primary + '22', borderColor: Colors.primary },
+  monthChipText: { color: Colors.textSecondary, fontSize: 11.5, fontWeight: '700' },
+  monthChipTextSelected: { color: Colors.primary },
+
+  customRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dateInput: { flex: 1, backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
+  dateInputText: { color: Colors.text, fontSize: 12.5, fontWeight: '600' },
 });
