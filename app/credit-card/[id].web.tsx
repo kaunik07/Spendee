@@ -6,6 +6,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import AddCreditCardTransactionSheet from '@/components/AddCreditCardTransactionSheet';
+import EditCCTxnDrawer from '@/components/web/EditCCTxnDrawer';
 import WebPanel from '@/components/web/WebPanel';
 import WebStatCard from '@/components/web/WebStatCard';
 import { Colors } from '@/constants/theme';
@@ -47,6 +48,9 @@ export default function CreditCardDetailScreenWeb() {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editingBilling, setEditingBilling] = useState(false);
+  // Transactions are edited in the right-side drawer, matching how they're
+  // added — no navigation away from the card.
+  const [editingTxn, setEditingTxn] = useState<CreditCardTransaction | null>(null);
   const [billingInput, setBillingInput] = useState('');
 
   const startRename = () => { setEditName(card?.name ?? ''); setIsEditing(true); };
@@ -212,7 +216,7 @@ export default function CreditCardDetailScreenWeb() {
                 const isCharge = txn.type === 'charge';
                 const color = isCharge ? CHARGE_COLOR : PAYMENT_COLOR;
                 return (
-                  <Pressable key={txn.id} style={styles.row} onPress={() => router.push(`/edit-cc-txn/${txn.id}?cardId=${id}`)}>
+                  <Pressable key={txn.id} style={styles.row} onPress={() => setEditingTxn(txn)}>
                     <View style={[styles.rowIcon, { backgroundColor: color + '18' }]}>
                       <MaterialCommunityIcons name={isCharge ? 'credit-card-outline' : 'cash-check'} size={17} color={color} />
                     </View>
@@ -234,6 +238,13 @@ export default function CreditCardDetailScreenWeb() {
       </WebPanel>
 
       <AddCreditCardTransactionSheet sheetRef={sheetRef} accounts={accounts} onSave={handleSave} />
+      <EditCCTxnDrawer
+        txn={editingTxn}
+        cardId={id}
+        visible={editingTxn !== null}
+        onClose={() => setEditingTxn(null)}
+        onSaved={refresh}
+      />
     </View>
   );
 }
