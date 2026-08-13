@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import CategoryPickerSheet from '@/components/CategoryPickerSheet';
 import SubcategorySection from '@/components/SubcategorySection';
+import WebDatePickerModal from '@/components/WebDatePickerModal';
 import { LEARNED_DETAIL_KEYS } from '@/constants/subcategories';
 import { SyncOp } from '@/store/syncQueue';
 import { Colors, getCategoryById } from '@/constants/theme';
@@ -335,6 +336,13 @@ export default function EditExpenseScreen() {
             </Pressable>
           </Modal>
         )}
+        <WebDatePickerModal
+          visible={showDatePicker && Platform.OS === 'web'}
+          date={date}
+          maxDate={new Date().toISOString().split('T')[0]}
+          onSelect={(d) => { setDate(d); setShowDatePicker(false); }}
+          onClose={() => setShowDatePicker(false)}
+        />
 
         {/* Payment method */}
         <Text style={styles.label}>Paid with <Text style={styles.optional}>(optional)</Text></Text>

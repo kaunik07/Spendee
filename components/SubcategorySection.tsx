@@ -20,6 +20,7 @@ import {
 } from '@/constants/subcategories';
 import { searchAirlines, AirlineHit } from '@/lib/airlines';
 import { searchAirports, AirportHit } from '@/lib/airports';
+import WebDatePickerModal from './WebDatePickerModal';
 
 const C = {
   bg:      '#1C1B23',
@@ -280,6 +281,12 @@ function DateField({ field, value, onChange }: { field: DetailField; value: any;
           </Pressable>
         </Modal>
       )}
+      <WebDatePickerModal
+        visible={show && Platform.OS === 'web'}
+        date={value ?? dateObj.toISOString().split('T')[0]}
+        onSelect={(d) => { onChange(d); setShow(false); }}
+        onClose={() => setShow(false)}
+      />
     </View>
   );
 }
@@ -360,7 +367,10 @@ function toLocalDateTimeString(d: Date): string {
 function DateTimeField({ field, value, onChange }: { field: DetailField; value: any; onChange: (v: any) => void }) {
   const [showIOS, setShowIOS]         = useState(false);
   const [androidStep, setAndroidStep] = useState<null | 'date' | 'time'>(null);
+  const [webStep, setWebStep]         = useState<null | 'date' | 'time'>(null);
   const [pendingDate, setPendingDate] = useState<Date | null>(null);
+  const [hourText, setHourText]       = useState('');
+  const [minuteText, setMinuteText]   = useState('');
 
   const dateObj = value ? new Date(value) : new Date();
 
@@ -370,6 +380,7 @@ function DateTimeField({ field, value, onChange }: { field: DetailField; value: 
 
   const open = () => {
     if (Platform.OS === 'ios') setShowIOS(true);
+    else if (Platform.OS === 'web') setWebStep('date');
     else setAndroidStep('date');
   };
 
@@ -429,6 +440,66 @@ function DateTimeField({ field, value, onChange }: { field: DetailField; value: 
                 style={{ width: '100%' }}
               />
               <TouchableOpacity style={styles.datePickerDone} onPress={() => setShowIOS(false)}>
+                <Text style={styles.datePickerDoneText}>Done</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
+      {/* Web: same two-step flow as Android (date, then time) since there's
+          no native combined datetime spinner to fall back on. */}
+      <WebDatePickerModal
+        visible={webStep === 'date' && Platform.OS === 'web'}
+        date={dateObj.toISOString().split('T')[0]}
+        onSelect={(d) => {
+          const combined = new Date(d + 'T00:00:00');
+          combined.setHours(dateObj.getHours(), dateObj.getMinutes(), 0, 0);
+          setPendingDate(combined);
+          setHourText(String(combined.getHours()).padStart(2, '0'));
+          setMinuteText(String(combined.getMinutes()).padStart(2, '0'));
+          setWebStep('time');
+        }}
+        onClose={() => setWebStep(null)}
+      />
+      {webStep === 'time' && Platform.OS === 'web' && (
+        <Modal transparent animationType="fade" onRequestClose={() => setWebStep(null)}>
+          <Pressable style={styles.timeModalOverlay} onPress={() => setWebStep(null)}>
+            <Pressable style={styles.timePickerCard} onPress={() => {}}>
+              <Text style={styles.timePickerTitle}>Set time</Text>
+              <View style={styles.timeInputRow}>
+                <TextInput
+                  style={styles.timeInput}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  value={hourText}
+                  onChangeText={setHourText}
+                  placeholder="HH"
+                  placeholderTextColor={C.outline}
+                />
+                <Text style={styles.timeColon}>:</Text>
+                <TextInput
+                  style={styles.timeInput}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  value={minuteText}
+                  onChangeText={setMinuteText}
+                  placeholder="MM"
+                  placeholderTextColor={C.outline}
+                />
+              </View>
+              <TouchableOpacity
+                style={styles.datePickerDone}
+                onPress={() => {
+                  const base = pendingDate ?? dateObj;
+                  const h = Math.min(23, Math.max(0, parseInt(hourText, 10) || 0));
+                  const m = Math.min(59, Math.max(0, parseInt(minuteText, 10) || 0));
+                  const combined = new Date(base);
+                  combined.setHours(h, m, 0, 0);
+                  onChange(toLocalDateTimeString(combined));
+                  setWebStep(null);
+                  setPendingDate(null);
+                }}>
                 <Text style={styles.datePickerDoneText}>Done</Text>
               </TouchableOpacity>
             </Pressable>
@@ -794,4 +865,34 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   datePickerDoneText: { color: C.onPrim, fontWeight: '700', fontSize: 15 },
+
+  timeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timePickerCard: {
+    backgroundColor: C.surface,
+    borderRadius: 20,
+    padding: 20,
+    width: '80%',
+    maxWidth: 280,
+    alignItems: 'center',
+  },
+  timePickerTitle: { color: C.text, fontSize: 15, fontWeight: '700', marginBottom: 14 },
+  timeInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
+  timeInput: {
+    backgroundColor: C.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    color: C.text,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    width: 56,
+    paddingVertical: 10,
+  },
+  timeColon: { color: C.text, fontSize: 20, fontWeight: '700' },
 });
