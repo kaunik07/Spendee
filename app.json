@@ -32,7 +32,7 @@
       "package": "com.kaunik6.spendee"
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [

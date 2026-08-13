@@ -1,0 +1,14 @@
+# Cloudflare Pages SPA fallback.
+#
+# The web build is a single-page app (app.json -> web.output: "single"), so
+# only index.html is emitted and Expo Router resolves every route in the
+# browser. Any deep link or refresh on a client-side route — /expenses,
+# /account/<uuid>, /edit-expense/<uuid> — has no file of its own on disk and
+# would 404 without this rule.
+#
+# Cloudflare Pages matches real static assets (the JS bundle, favicon,
+# /assets/*) before applying _redirects, so this catch-all only fires for
+# paths that aren't files. The 200 serves index.html in place rather than
+# issuing a redirect, which keeps the requested URL in the address bar for
+# the router to read.
+/*    /index.html   200
