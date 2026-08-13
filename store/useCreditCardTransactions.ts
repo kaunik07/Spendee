@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
 import { getQueue, materializeRows } from './syncQueue';
 import { subscribeSync } from './syncBus';
+import { useRealtimeRefresh } from './useRealtimeRefresh';
 
 export interface CreditCardTransaction {
   id: string;
@@ -53,9 +54,8 @@ export function useCreditCardTransactions(
 ) {
   const [transactions, setTransactions] = useState<CreditCardTransaction[]>([]);
   const [loading, setLoading]           = useState(true);
-  const [refreshKey, setRefreshKey]     = useState(0);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const { refreshKey, refresh } = useRealtimeRefresh();
 
   useEffect(() => { setTransactions([]); }, [cardId, userId, storageMode]);
 

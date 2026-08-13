@@ -9,6 +9,7 @@ import {
   materializeRows, pendingRowIds,
 } from './syncQueue';
 import { subscribeSync, notifySync } from './syncBus';
+import { useRealtimeRefresh } from './useRealtimeRefresh';
 
 export interface Expense {
   id: string;
@@ -69,11 +70,10 @@ export function useExpenses(userId: string | null, storageMode: StorageMode | nu
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   const localKey = `@spendee_expenses_${userId}`;
   const cacheKey = `@spendee_expenses_cache_${userId}`;
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const { refreshKey, refresh } = useRealtimeRefresh();
 
   // Realtime sync (online mode only)
   useEffect(() => {

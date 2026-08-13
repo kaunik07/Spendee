@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
 import { getQueue, materializeRows } from './syncQueue';
 import { subscribeSync } from './syncBus';
+import { useRealtimeRefresh } from './useRealtimeRefresh';
 
 export interface AccountTransaction {
   id: string;
@@ -49,9 +50,8 @@ export function useAccountTransactions(
 ) {
   const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
   const [loading, setLoading]           = useState(true);
-  const [refreshKey, setRefreshKey]     = useState(0);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const { refreshKey, refresh } = useRealtimeRefresh();
 
   // Realtime sync (online mode only)
   useEffect(() => {
