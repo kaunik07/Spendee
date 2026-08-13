@@ -8,7 +8,6 @@ import React, { useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import AddAccountSheet from '@/components/AddAccountSheet';
 import AddCreditCardSheet from '@/components/AddCreditCardSheet';
-import WebLayout from '@/components/web/WebLayout';
 import WebPanel from '@/components/web/WebPanel';
 import WebStatCard from '@/components/web/WebStatCard';
 import { Colors } from '@/constants/theme';
@@ -37,7 +36,6 @@ export default function ProfileScreenWeb() {
   const handleDefaultSourceChange = (sourceId: string) => saveDefault(defaultPayment.type, defaultPayment.sourceId === sourceId ? null : sourceId);
 
   return (
-    <WebLayout>
     <View>
       <View style={styles.topbar}>
         <View style={styles.identity}>
@@ -130,7 +128,6 @@ export default function ProfileScreenWeb() {
       <AddAccountSheet sheetRef={accountSheetRef} />
       <AddCreditCardSheet sheetRef={cardSheetRef} />
     </View>
-    </WebLayout>
   );
 }
 

@@ -5,7 +5,6 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import WebLayout from '@/components/web/WebLayout';
 import { Colors } from '@/constants/theme';
 import { useAuthContext } from '@/store/AuthContext';
 
@@ -20,7 +19,6 @@ export default function SettingsScreenWeb() {
   };
 
   return (
-    <WebLayout>
     <View>
       <Text style={styles.title}>Settings</Text>
       <Text style={styles.sub}>Manage your account</Text>
@@ -44,7 +42,6 @@ export default function SettingsScreenWeb() {
         </Pressable>
       </View>
     </View>
-    </WebLayout>
   );
 }
 

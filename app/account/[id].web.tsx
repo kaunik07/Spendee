@@ -6,7 +6,6 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import AddAccountTransactionSheet from '@/components/AddAccountTransactionSheet';
-import WebLayout from '@/components/web/WebLayout';
 import WebPanel from '@/components/web/WebPanel';
 import WebStatCard from '@/components/web/WebStatCard';
 import { Colors } from '@/constants/theme';
@@ -97,7 +96,6 @@ export default function AccountDetailScreenWeb() {
   if (!account) return null;
 
   return (
-    <WebLayout>
     <View>
       <View style={styles.topbar}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={{ marginRight: 4 }}>
@@ -162,7 +160,6 @@ export default function AccountDetailScreenWeb() {
 
       <AddAccountTransactionSheet sheetRef={sheetRef} onSave={handleSave} />
     </View>
-    </WebLayout>
   );
 }
 

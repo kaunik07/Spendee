@@ -13,6 +13,7 @@ import { AuthProvider, useAuthContext } from '@/store/AuthContext';
 import { BudgetsProvider } from '@/store/BudgetsContext';
 import { ExpenseProvider } from '@/store/ExpenseContext';
 import { SavingsProvider } from '@/store/SavingsContext';
+import WebLayout from '@/components/web/WebLayout';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -112,6 +113,21 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (requiresBiometric) return <BiometricLockScreen />;
 
+  // Web: the sidebar shell mounts exactly ONCE here, wrapping every
+  // authenticated route (tabs + all root-level screens like profile,
+  // settings, account/[id], edit-expense/[id], ...). Each of those
+  // .web.tsx screens used to wrap itself in its own <WebLayout> — when
+  // navigating from a (tabs) screen to a root-level one, that meant two
+  // WebLayout/sidebar instances competing for the same page (the old
+  // screen's sidebar left mounted underneath the new one, which doesn't
+  // fill the viewport on its own), producing a stray sidebar fragment.
+  // A single ancestor instance makes that structurally impossible, and
+  // the sidebar no longer remounts/flickers between navigations either.
+  // Not applied to login/signup — those render before `user` exists.
+  if (Platform.OS === 'web' && user) {
+    return <WebLayout>{children}</WebLayout>;
+  }
+
   return <>{children}</>;
 }
 
@@ -126,18 +142,23 @@ export default function RootLayout() {
             <CreditCardsProvider>
             <BudgetsProvider>
               <AuthGuard>
-                <Stack>
-                  <Stack.Screen name="(tabs)"    options={{ headerShown: false }} />
-                  <Stack.Screen name="login"     options={{ headerShown: false, animation: 'fade' }} />
-                  <Stack.Screen name="signup"    options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="profile"      options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="settings"        options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="delete-account"     options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="credit-card/[id]"    options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="account/[id]"       options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="edit-expense/[id]"  options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="edit-account-txn/[id]" options={{ headerShown: false, animation: 'slide_from_right' }} />
-                  <Stack.Screen name="edit-cc-txn/[id]"   options={{ headerShown: false, animation: 'slide_from_right' }} />
+                {/* Native screens navigate with a slide-from-right transition; on
+                    web that plays as a visible sliding animation (React Navigation's
+                    native-stack supports CSS transitions on web too), which reads as
+                    janky/half-rendered on a page load rather than the instant
+                    navigation web users expect — so it's turned off there. */}
+                <Stack screenOptions={{ animation: Platform.OS === 'web' ? 'none' : 'slide_from_right' }}>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="login"  options={{ headerShown: false, animation: Platform.OS === 'web' ? 'none' : 'fade' }} />
+                  <Stack.Screen name="signup"    options={{ headerShown: false }} />
+                  <Stack.Screen name="profile"      options={{ headerShown: false }} />
+                  <Stack.Screen name="settings"        options={{ headerShown: false }} />
+                  <Stack.Screen name="delete-account"     options={{ headerShown: false }} />
+                  <Stack.Screen name="credit-card/[id]"    options={{ headerShown: false }} />
+                  <Stack.Screen name="account/[id]"       options={{ headerShown: false }} />
+                  <Stack.Screen name="edit-expense/[id]"  options={{ headerShown: false }} />
+                  <Stack.Screen name="edit-account-txn/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="edit-cc-txn/[id]"   options={{ headerShown: false }} />
                 </Stack>
                 <StatusBar style="light" />
               </AuthGuard>

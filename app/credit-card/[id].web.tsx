@@ -6,7 +6,6 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import AddCreditCardTransactionSheet from '@/components/AddCreditCardTransactionSheet';
-import WebLayout from '@/components/web/WebLayout';
 import WebPanel from '@/components/web/WebPanel';
 import WebStatCard from '@/components/web/WebStatCard';
 import { Colors } from '@/constants/theme';
@@ -138,7 +137,6 @@ export default function CreditCardDetailScreenWeb() {
   if (!card) return null;
 
   return (
-    <WebLayout>
     <View>
       <View style={styles.topbar}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={{ marginRight: 4 }}>
@@ -237,7 +235,6 @@ export default function CreditCardDetailScreenWeb() {
 
       <AddCreditCardTransactionSheet sheetRef={sheetRef} accounts={accounts} onSave={handleSave} />
     </View>
-    </WebLayout>
   );
 }
 
