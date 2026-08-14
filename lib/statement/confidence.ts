@@ -28,9 +28,16 @@ function reconcileSections(assembled: AssembleResult, profile: BankProfile): Sec
   return profile.sections
     .filter((s) => s.totalLabel) // only sections the profile can even check
     .map((s) => {
+      // NET, not summed — a credit (most commonly a refund printed inline in
+      // an otherwise all-debit section, which is exactly what
+      // signConvention: 'signed' is for) subtracts rather than adds. Summing
+      // both directions as positive was a real bug caught by this exact
+      // document: every section containing a refund reconciled high by
+      // precisely 2x that refund's amount, since the refund was being added
+      // where the bank's own total nets it out.
       const parsed = assembled.txns
         .filter((t) => t.section === s.id)
-        .reduce((sum, t) => sum + t.amount, 0);
+        .reduce((sum, t) => sum + (t.direction === 'credit' ? -t.amount : t.amount), 0);
       const printed = assembled.printedTotals[s.id] ?? null;
       const ok = printed == null
         ? true // no printed total FOUND on this document — not a failure, just not checkable
