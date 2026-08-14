@@ -17,6 +17,7 @@
 
 import { verifyCaller } from './auth';
 import { categorize, CategorizeEnv } from './categorize';
+import { submitFeedback } from './feedback';
 import { reserve, currentDay, currentMonth } from './quota';
 
 export { QuotaCounter } from './quota';
@@ -90,7 +91,7 @@ export default {
       }, 200, origin);
     }
 
-    if (url.pathname !== '/categorize') {
+    if (url.pathname !== '/categorize' && url.pathname !== '/merchant-feedback') {
       return errorResponse('not_found', 'No such endpoint.', 404, origin);
     }
     if (request.method !== 'POST') {
@@ -119,8 +120,16 @@ export default {
       return errorResponse('invalid_request', 'Malformed JSON body.', 400, origin);
     }
 
-    const outcome = await categorize(env, (body as any)?.keys);
+    if (url.pathname === '/categorize') {
+      const outcome = await categorize(env, (body as any)?.keys);
+      if (!outcome.ok) return errorResponse('invalid_request', outcome.error, outcome.status, origin);
+      return json(outcome.body, 200, origin);
+    }
+
+    // /merchant-feedback
+    if (!authHeader) return errorResponse('unauthorized', 'Please sign in again.', 401, origin); // narrows for TS below
+    const outcome = await submitFeedback(env, authHeader, user.id, (body as any)?.corrections);
     if (!outcome.ok) return errorResponse('invalid_request', outcome.error, outcome.status, origin);
-    return json(outcome.body, 200, origin);
+    return json({ applied: outcome.applied, seeded: outcome.seeded }, 200, origin);
   },
 };

@@ -1,15 +1,22 @@
 /**
- * Supabase REST access for the global merchant map.
+ * Supabase REST access for the two merchant tables.
  *
  * Raw fetch against PostgREST, not the supabase-js SDK — same reasoning as
  * Trip Planner's worker/src/supabase-cache.ts: nothing else in this Worker
  * pulls in a client library, so a heavier SDK for two tables would be the odd
  * one out.
  *
- * merchant_categories is RLS-enabled with NO policies. Only the service role
- * can reach it at all, which is the point: a globally-shared table any
- * authenticated client could write is a table one user can poison for
- * everyone.
+ * The two tables are reached with deliberately different credentials:
+ *
+ *   merchant_categories — RLS-enabled with NO policies. Only the service role
+ *   can reach it at all, which is the point: a globally-shared table any
+ *   authenticated client could write is a table one user can poison for
+ *   everyone.
+ *
+ *   merchant_overrides — RLS-scoped to `auth.uid() = user_id`. Reached by
+ *   FORWARDING the caller's own bearer token to PostgREST, never the service
+ *   role, so this Worker never holds elevated access to a user's data — it
+ *   can only do what the calling user's own session already permits.
  */
 
 export interface MerchantEnv {
@@ -27,6 +34,22 @@ async function restServiceRole(env: MerchantEnv, path: string, init: RequestInit
     headers: {
       apikey: env.SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      ...init.headers,
+    },
+  });
+}
+
+/** Forwards the CALLER's own token, so RLS decides what this can touch — never service role. */
+async function restAsCaller(
+  env: MerchantEnv, callerAuthHeader: string, path: string, init: RequestInit = {},
+): Promise<Response> {
+  return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+    headers: {
+      apikey: env.SUPABASE_ANON_KEY,
+      Authorization: callerAuthHeader,
       'Content-Type': 'application/json',
       ...init.headers,
     },
@@ -79,4 +102,26 @@ export async function insertGlobalCategoriesIfAbsent(
     headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
     body: JSON.stringify(rows.map((r) => ({ ...r, confidence: r.source === 'model' ? 0.9 : 0 }))),
   });
+}
+
+/**
+ * Upserts the caller's own override — always wins for THIS user, and never
+ * touches the global row. One person filing Amazon as groceries must never
+ * become everyone's default.
+ *
+ * `userId` must be the id verifyCaller already extracted from this same
+ * token (see auth.ts) — PostgREST doesn't fill user_id from the JWT on its
+ * own, and the row's `WITH CHECK (auth.uid() = user_id)` policy rejects the
+ * insert outright if it doesn't match, so this has to be sent explicitly.
+ */
+export async function upsertOverride(
+  env: MerchantEnv, callerAuthHeader: string, userId: string,
+  merchantKey: string, category: string, subcategory: string | null,
+): Promise<boolean> {
+  const res = await restAsCaller(env, callerAuthHeader, 'merchant_overrides?on_conflict=user_id,merchant_key', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ user_id: userId, merchant_key: merchantKey, category, subcategory }),
+  });
+  return res.ok;
 }
