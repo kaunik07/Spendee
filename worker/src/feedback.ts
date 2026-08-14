@@ -23,6 +23,7 @@ export interface Correction {
   merchantKey: string;
   category: string;
   subcategory?: string | null;
+  details?: Record<string, string> | null;
 }
 
 function isCorrectionArray(v: unknown): v is Correction[] {
@@ -63,7 +64,7 @@ export async function submitFeedback(
 
   let applied = 0;
   await Promise.all(valid.map(async (c) => {
-    const ok = await upsertOverride(env, callerAuthHeader, userId, c.merchantKey, c.category, c.subcategory ?? null);
+    const ok = await upsertOverride(env, callerAuthHeader, userId, c.merchantKey, c.category, c.subcategory ?? null, c.details ?? null);
     if (ok) applied++;
   }));
 

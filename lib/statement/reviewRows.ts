@@ -32,20 +32,39 @@ export interface ExistingExpenseLite {
   importFingerprint: string | null;
 }
 
+interface MerchantInfo {
+  category: string;
+  subcategory: string | null;
+  details: Record<string, string> | null;
+  /** 'override' short-circuits the local-pattern-then-model cascade below entirely — it's the user's own last word on this merchant. */
+  fromOverride: boolean;
+}
+
 /**
- * Resolution order, per merchant key: a per-user correction always wins (it's
- * the user overriding the map for themselves), then the shared map/model
- * answer, then 'other' — never fatal, never blocks the review step.
+ * Resolution order, per merchant key:
+ *   1. merchant_overrides — a per-user correction. Always wins outright,
+ *      category/subcategory/details together, exactly as the user set them
+ *      — this is the one path that bypasses the cascade below entirely.
+ *   2. The Worker's /categorize — category always; subcategory + detail too,
+ *      when Gemini had something to say and it passed validation against
+ *      constants/subcategories.ts's own list (see categorize.ts's
+ *      validateAnswer — a subcategory outside that list, or a constrained
+ *      detail outside its fixed options, never reaches here at all).
+ *   3. 'other' — the Worker is unreachable/unconfigured, or never learned
+ *      this merchant, or its Gemini quota is exhausted this month. Never
+ *      fatal; the review step is what absorbs it.
  */
-async function resolveCategories(keys: string[]): Promise<Record<string, string>> {
-  const result: Record<string, string> = {};
-  for (const k of keys) result[k] = 'other';
+async function resolveMerchantInfo(keys: string[]): Promise<Record<string, MerchantInfo>> {
+  const result: Record<string, MerchantInfo> = {};
+  for (const k of keys) result[k] = { category: 'other', subcategory: null, details: null, fromOverride: false };
   if (keys.length === 0) return result;
 
   if (isStatementsConfigured()) {
     try {
       const { map } = await categorizeMerchants(keys);
-      for (const [k, v] of Object.entries(map)) result[k] = v.category;
+      for (const [k, v] of Object.entries(map)) {
+        result[k] = { category: v.category, subcategory: v.subcategory, details: v.details, fromOverride: false };
+      }
     } catch {
       // Worker unreachable/misconfigured — every key stays 'other'. The
       // review step exists exactly to absorb this; it's not a failed import.
@@ -54,15 +73,36 @@ async function resolveCategories(keys: string[]): Promise<Record<string, string>
 
   const { data, error } = await supabase
     .from('merchant_overrides')
-    .select('merchant_key, category')
+    .select('merchant_key, category, subcategory, details')
     .in('merchant_key', keys);
   if (!error && data) {
-    for (const row of data as { merchant_key: string; category: string }[]) {
-      result[row.merchant_key] = row.category; // override always wins
+    for (const row of data as { merchant_key: string; category: string; subcategory: string | null; details: Record<string, string> | null }[]) {
+      result[row.merchant_key] = { category: row.category, subcategory: row.subcategory, details: row.details, fromOverride: true };
     }
   }
 
   return result;
+}
+
+/**
+ * Local pattern-matching first, Gemini only for what the patterns miss.
+ * subcategorize.ts covers five categories (transport, food, shopping,
+ * groceries, subscriptions) with curated, zero-latency, zero-cost brand
+ * matches — Lyft, DoorDash, Amazon and the like. When it has nothing to say
+ * (a category it doesn't cover, or a merchant that doesn't match any of its
+ * patterns), whatever the Worker already returned alongside category — from
+ * the same round trip, no extra call — fills the gap.
+ *
+ * An override skips this entirely: it's the user's own last word, not a
+ * default to refine further.
+ */
+function resolveSubcategory(info: MerchantInfo, raw: string, merchantName: string): { subcategory: string | null; details: Record<string, string> | null } {
+  if (info.fromOverride) return { subcategory: info.subcategory, details: info.details };
+
+  const local = inferSubcategory(info.category, raw, merchantName);
+  if (local.subcategory || local.details) return local;
+
+  return { subcategory: info.subcategory, details: info.details };
 }
 
 export async function buildReviewRows(
@@ -75,7 +115,7 @@ export async function buildReviewRows(
   );
 
   const distinctKeys = [...new Set(normalized.map((n) => n.key))];
-  const categoryByKey = await resolveCategories(distinctKeys);
+  const infoByKey = await resolveMerchantInfo(distinctKeys);
 
   const existingFingerprints = new Set(
     existing.map((e) => e.importFingerprint).filter((f): f is string => !!f),
@@ -88,8 +128,8 @@ export async function buildReviewRows(
 
   return txns.map((t, i) => {
     const { key: merchantKey, display } = normalized[i];
-    const category = categoryByKey[merchantKey] ?? 'other';
-    const { subcategory, details } = inferSubcategory(category, t.description, display);
+    const info = infoByKey[merchantKey] ?? { category: 'other', subcategory: null, details: null, fromOverride: false };
+    const { subcategory, details } = resolveSubcategory(info, t.description, display);
     const isCredit = t.direction === 'credit';
     const fingerprint = fingerprints[i];
 
@@ -106,7 +146,7 @@ export async function buildReviewRows(
       raw: t,
       merchantKey,
       name: display,
-      category,
+      category: info.category,
       subcategory,
       details,
       fingerprint,

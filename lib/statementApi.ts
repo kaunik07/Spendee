@@ -82,6 +82,10 @@ async function callWorker<T>(path: string, body: unknown): Promise<T> {
 
 export interface CategorizeResultEntry {
   category: string;
+  /** From constants/subcategories.ts's list for `category` — never a value outside it. */
+  subcategory: string | null;
+  /** The specific identity behind the subcategory (airline, restaurant, store...), keyed to match Expense.details' shape. */
+  details: Record<string, string> | null;
   source: 'map' | 'model';
 }
 
@@ -99,6 +103,7 @@ export interface MerchantCorrection {
   merchantKey: string;
   category: string;
   subcategory?: string | null;
+  details?: Record<string, string> | null;
 }
 
 export interface FeedbackResponse {

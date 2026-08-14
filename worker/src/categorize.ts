@@ -12,11 +12,25 @@
  * from Supabase with its own credentials — this endpoint has nothing to add
  * there, and keeping it out is what keeps this Worker's job to exactly one
  * thing: the table a client is not allowed to touch itself.
+ *
+ * Category AND subcategory are both closed vocabularies — Gemini picks from
+ * constants/theme.ts's 15 categories and, within whichever one it picks,
+ * from constants/subcategories.ts's own list for that category (or answers
+ * null if the category has none, or nothing fits). It never invents a new
+ * category or subcategory; validateAnswer below enforces that by simply
+ * discarding anything not in the known list rather than trusting the model's
+ * output at face value. The one place Gemini has real freedom is the
+ * *identity* underneath a subcategory — which specific airline, which
+ * restaurant, which store — and even there, a field with its own fixed
+ * option set (cab's provider: exactly "Lyft" or "Uber") stays constrained to
+ * those options; only genuinely open fields (an airline name, a restaurant
+ * name) accept free text.
  */
 
-import { CATEGORY_IDS, CATEGORY_LABELS, isCategoryId } from './categories';
+import { CATEGORY_IDS, CATEGORY_LABELS, CategoryId, isCategoryId } from './categories';
 import { callGeminiWithRetry } from './gemini';
 import { getGlobalCategories, insertGlobalCategoriesIfAbsent, MerchantEnv } from './merchants';
+import { GROCERIES_DETAIL_FIELD, IDENTITY_FIELD, SUBCATEGORIES, SUBCATEGORY_IDS } from './subcategories';
 import { QuotaGrant, reserve, currentMonth } from './quota';
 
 /** Per Gemini call. Keeps prompts small and keeps one slow batch from blocking the rest. */
@@ -24,6 +38,8 @@ const GEMINI_BATCH_SIZE = 60;
 /** Hard ceiling on one request's key list — a parsed statement caps at 500 rows, so this is generous. */
 const MAX_KEYS = 300;
 const MAX_KEY_LENGTH = 80;
+/** A detail value is a name, not a paragraph — guards against a model going off-script. */
+const MAX_DETAIL_LENGTH = 60;
 
 export interface CategorizeEnv extends MerchantEnv {
   GEMINI_API_KEY?: string;
@@ -45,28 +61,89 @@ const RESPONSE_SCHEMA = {
     properties: {
       merchant: { type: 'STRING' },
       category: { type: 'STRING', enum: [...CATEGORY_IDS] },
+      // Free STRING, not an enum — the valid set depends on which category
+      // this same answer picked, which a flat JSON schema can't express
+      // conditionally. Validated in code instead (validateAnswer), against
+      // exactly the same SUBCATEGORY_IDS list the prompt already showed it.
+      subcategory: { type: 'STRING', nullable: true },
+      // Required + "" for "nothing to extract" rather than nullable — at
+      // temperature 0, a `nullable: true` STRING field measurably biased the
+      // model toward null on this endpoint even for merchants that plainly
+      // named their own identity ("SOUTHWEST AIRLINES 8871" -> null instead
+      // of "Southwest Airlines", confirmed by direct testing against the
+      // live endpoint, every single time across two prompt revisions).
+      // Category and subcategory use the identical nullable pattern and
+      // never showed this bias, so it's specific to how the model treats an
+      // optional-feeling trailing field, not the schema mechanism itself.
+      detail: { type: 'STRING' },
     },
-    required: ['merchant', 'category'],
+    required: ['merchant', 'category', 'detail'],
   },
 };
 
+/** The block of prompt text describing every category's subcategory options and what, if anything, "detail" means for each. Built once, not per request. */
+function subcategoryGuide(): string {
+  const lines: string[] = [];
+  for (const id of CATEGORY_IDS) {
+    const subs = SUBCATEGORIES[id];
+    if (subs.length === 0) {
+      lines.push(`- ${id}: no subcategories — always answer subcategory: null, detail: null`);
+      continue;
+    }
+    const subParts = subs.map((s) => {
+      const idField = IDENTITY_FIELD[`${id}:${s.id}`];
+      if (!idField) return s.id;
+      if (idField.options) return `${s.id} (detail = exactly one of ${JSON.stringify(idField.options)}, or null)`;
+      return `${s.id} (detail = the specific ${idField.key.replace('_', ' ')}, or null if not evident)`;
+    });
+    lines.push(`- ${id}: subcategory must be one of [${subParts.join(', ')}], or null if none fit`);
+  }
+  lines.push(`- groceries: no subcategory list — subcategory: null always, but detail = the specific store name if evident (e.g. ${JSON.stringify(GROCERIES_DETAIL_FIELD.options)} or any other real store), else null`);
+  return lines.join('\n');
+}
+
+const SUBCATEGORY_GUIDE = subcategoryGuide();
+
 function prompt(keys: string[]): string {
   const list = CATEGORY_IDS.map((id) => `- ${id}: ${CATEGORY_LABELS[id]}`).join('\n');
-  return `Classify each merchant name below into exactly one of these categories:
+  return `Classify each merchant name below. For each one, answer:
+1. category — exactly one of:
 ${list}
+   Use "other" when genuinely unsure — never guess a specific category you
+   aren't reasonably confident in.
 
-Use "other" when genuinely unsure — never guess a specific category you aren't
-reasonably confident in. These are normalized merchant name strings only, with
-no other context (no amounts, no dates, no location).
+2. subcategory — ONLY from the list for whichever category you just picked.
+   Never invent a subcategory that isn't listed for that category, and never
+   invent a new category either. Per-category rules:
+${SUBCATEGORY_GUIDE}
+
+3. detail — REQUIRED on every answer (use "" only when truly nothing to
+   extract). This is the one specific identity a subcategory calls for (see
+   above) — e.g. "Alaska Airlines" for a flight, "Lyft" for a cab, "Chipotle"
+   for dining, "Trader Joe's" for groceries. Almost always this identity is
+   already sitting right in the merchant name itself, so default to
+   extracting it: if the merchant name IS the airline, the rental company,
+   the restaurant, pull it out and clean it up. Examples:
+     "DELTA AIR LINES 0064 5511"  -> detail "Delta Air Lines"
+     "HERTZ CAR RENTAL LAX T2"    -> detail "Hertz"
+     "SOUTHWEST AIRLINES 8871"    -> detail "Southwest Airlines"
+     "OLIVE GARDEN ITALIAN REST"  -> detail "Olive Garden"
+     "WHOLE FOODS MARKET 4471"    -> detail "Whole Foods Market"
+   Use "" only when the merchant name is genuinely generic with no brand or
+   name in it at all (e.g. a bare processor reference with nothing else).
+
+These are normalized merchant name strings only, with no other context (no
+amounts, no dates, no location).
 
 Merchants:
 ${JSON.stringify(keys)}
 
 Reply with ONLY a JSON array, no prose and no markdown fences, one entry per
-merchant in the same order, each { "merchant": "...", "category": "..." }.`;
+merchant in the same order, each
+{ "merchant": "...", "category": "...", "subcategory": "..." | null, "detail": "..." | null }.`;
 }
 
-interface GeminiAnswer { merchant: string; category: string }
+interface GeminiAnswer { merchant: string; category: string; subcategory?: string | null; detail?: string | null }
 
 function isGeminiAnswerArray(v: unknown): v is GeminiAnswer[] {
   return Array.isArray(v) && v.every(
@@ -74,8 +151,34 @@ function isGeminiAnswerArray(v: unknown): v is GeminiAnswer[] {
   );
 }
 
+/**
+ * The actual enforcement of "closed vocabulary" — takes whatever Gemini said
+ * and returns only the parts that are genuinely valid, discarding rather
+ * than coercing anything that isn't. A subcategory not in that category's
+ * list, or a constrained detail that isn't one of its exact options, comes
+ * back null — same treatment as "the model didn't know."
+ */
+function validateAnswer(category: CategoryId, rawSubcategory: unknown, rawDetail: unknown): { subcategory: string | null; details: Record<string, string> | null } {
+  const subcategory = typeof rawSubcategory === 'string' && SUBCATEGORY_IDS[category].includes(rawSubcategory)
+    ? rawSubcategory
+    : null;
+
+  const detail = typeof rawDetail === 'string' ? rawDetail.trim().slice(0, MAX_DETAIL_LENGTH) : '';
+  if (!detail) return { subcategory, details: null };
+
+  const idField = category === 'groceries'
+    ? GROCERIES_DETAIL_FIELD
+    : (subcategory ? IDENTITY_FIELD[`${category}:${subcategory}`] : undefined);
+  if (!idField) return { subcategory, details: null }; // detail offered for a field that doesn't take one — ignored, not stored
+
+  if (idField.options && !idField.options.includes(detail)) return { subcategory, details: null };
+  return { subcategory, details: { [idField.key]: detail } };
+}
+
 export interface CategorizeResultEntry {
   category: string;
+  subcategory: string | null;
+  details: Record<string, string> | null;
   source: 'map' | 'model';
 }
 
@@ -108,7 +211,9 @@ export async function categorize(env: CategorizeEnv, rawKeys: unknown): Promise<
 
   const cached = await getGlobalCategories(env, keys);
   const map: Record<string, CategorizeResultEntry> = {};
-  for (const [key, row] of cached) map[key] = { category: row.category, source: 'map' };
+  for (const [key, row] of cached) {
+    map[key] = { category: row.category, subcategory: row.subcategory, details: row.details, source: 'map' };
+  }
 
   const unresolved = keys.filter((k) => !cached.has(k));
   let modelCalls = 0;
@@ -138,12 +243,13 @@ export async function categorize(env: CategorizeEnv, rawKeys: unknown): Promise<
       }
       modelCalls++;
 
-      const toInsert: { merchant_key: string; category: string; source: 'model' }[] = [];
+      const toInsert: { merchant_key: string; category: string; subcategory: string | null; details: Record<string, string> | null; source: 'model' }[] = [];
       for (const a of answers) {
         if (!keys.includes(a.merchant) || !isCategoryId(a.category)) continue;
-        map[a.merchant] = { category: a.category, source: 'model' };
+        const { subcategory, details } = validateAnswer(a.category, a.subcategory, a.detail);
+        map[a.merchant] = { category: a.category, subcategory, details, source: 'model' };
         modelAnswered++;
-        toInsert.push({ merchant_key: a.merchant, category: a.category, source: 'model' });
+        toInsert.push({ merchant_key: a.merchant, category: a.category, subcategory, details, source: 'model' });
       }
       if (toInsert.length) await insertGlobalCategoriesIfAbsent(env, toInsert);
     }

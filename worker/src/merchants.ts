@@ -59,6 +59,7 @@ async function restAsCaller(
 export interface CategoryRow {
   category: string;
   subcategory: string | null;
+  details: Record<string, string> | null;
   source: 'seed' | 'model' | 'crowd';
 }
 
@@ -75,13 +76,13 @@ export async function getGlobalCategories(
 
   const q = new URLSearchParams({
     merchant_key: `in.(${keys.map((k) => `"${k.replace(/"/g, '\\"')}"`).join(',')})`,
-    select: 'merchant_key,category,subcategory,source',
+    select: 'merchant_key,category,subcategory,details,source',
   });
   const res = await restServiceRole(env, `merchant_categories?${q}`);
   if (!res.ok) return out;
 
-  const rows = await res.json<{ merchant_key: string; category: string; subcategory: string | null; source: CategoryRow['source'] }[]>();
-  for (const r of rows) out.set(r.merchant_key, { category: r.category, subcategory: r.subcategory, source: r.source });
+  const rows = await res.json<{ merchant_key: string; category: string; subcategory: string | null; details: Record<string, string> | null; source: CategoryRow['source'] }[]>();
+  for (const r of rows) out.set(r.merchant_key, { category: r.category, subcategory: r.subcategory, details: r.details, source: r.source });
   return out;
 }
 
@@ -94,7 +95,7 @@ export async function getGlobalCategories(
  */
 export async function insertGlobalCategoriesIfAbsent(
   env: MerchantEnv,
-  rows: { merchant_key: string; category: string; source: 'model' | 'crowd' }[],
+  rows: { merchant_key: string; category: string; subcategory?: string | null; details?: Record<string, string> | null; source: 'model' | 'crowd' }[],
 ): Promise<void> {
   if (!rows.length) return;
   await restServiceRole(env, 'merchant_categories?on_conflict=merchant_key', {
@@ -116,12 +117,12 @@ export async function insertGlobalCategoriesIfAbsent(
  */
 export async function upsertOverride(
   env: MerchantEnv, callerAuthHeader: string, userId: string,
-  merchantKey: string, category: string, subcategory: string | null,
+  merchantKey: string, category: string, subcategory: string | null, details: Record<string, string> | null = null,
 ): Promise<boolean> {
   const res = await restAsCaller(env, callerAuthHeader, 'merchant_overrides?on_conflict=user_id,merchant_key', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({ user_id: userId, merchant_key: merchantKey, category, subcategory }),
+    body: JSON.stringify({ user_id: userId, merchant_key: merchantKey, category, subcategory, details }),
   });
   return res.ok;
 }
