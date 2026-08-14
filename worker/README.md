@@ -16,6 +16,37 @@ parsing run entirely in the browser (`lib/statement/` in the app repo) — only
 normalized merchant name strings, like `"BLUE BOTTLE COFFEE"`, are ever sent
 here. No amounts, no dates, no account numbers, no balances.
 
+## Supported documents
+
+Bank profiles live in `lib/statement/profiles/` in the app repo, one file per
+bank, each declaring its own `status: 'live' | 'in_development'`.
+
+| Bank | Document | `docType` | Status |
+|---|---|---|---|
+| Chase | Credit card statement | `statement` | **Live** — calibrated against a real Chase Sapphire Reserve statement excerpt |
+| Chase | Credit card spending report | `spending_report` | **Paused** — see below |
+| Bank of America | Credit card statement | `statement` | Not started — listed in the UI, disabled |
+
+**Chase spending report is intentionally paused, not broken or abandoned.**
+`CHASE_CC_SPENDING_REPORT` in `chase.ts` is fully calibrated against a real
+document (11 pages, 12 categories, ~250 transactions) — its `status` was
+deliberately moved back to `'in_development'` so it can't be selected, and
+the document-type picker step was removed from `app/import-statement.web.tsx`
+entirely (statement is the only option shown). Re-enabling it later is a
+one-line `status` flip plus restoring that UI step, not a recalibration.
+
+The reason: statement import routes every transaction through the same
+merchant-lookup + AI categorization pipeline this Worker provides (a
+statement carries no Chase-assigned category to lean on), and the plan is
+for subcategory-level detail too (e.g. which cab provider, which airline).
+How the spending report's own category-per-section mapping — its `TRAVEL`
+section currently maps to Spendee's `trip` category — should reconcile with
+the app's existing `transport` subcategories (`flight`/`cab`/`car-rental`/
+`cruise`/`train` live under `transport`, not `trip`, in
+`constants/subcategories.ts`) is still an open design question. See the
+`spending-report-paused` memory note for the same status recorded outside
+this repo.
+
 ## Endpoints
 
 | Endpoint | Auth | Purpose |
