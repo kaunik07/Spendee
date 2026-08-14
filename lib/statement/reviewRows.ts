@@ -127,9 +127,9 @@ export async function buildReviewRows(
   for (const e of existing) byDateAmount.set(`${e.date}|${Math.round(e.amount * 100)}`, e);
 
   return txns.map((t, i) => {
-    const { key: merchantKey, display, cleanDisplay } = normalized[i];
+    const { key: merchantKey, display } = normalized[i];
     const info = infoByKey[merchantKey] ?? { category: 'other', subcategory: null, details: null, fromOverride: false };
-    const { subcategory, details } = resolveSubcategory(info, t.description, cleanDisplay);
+    const { subcategory, details } = resolveSubcategory(info, t.description, display);
     const isCredit = t.direction === 'credit';
     const fingerprint = fingerprints[i];
 
@@ -145,8 +145,7 @@ export async function buildReviewRows(
       key: `${t.page}-${t.row}`,
       raw: t,
       merchantKey,
-      name: cleanDisplay,
-      display: display, // Keep full display for reference
+      name: display,
       category: info.category,
       subcategory,
       details,

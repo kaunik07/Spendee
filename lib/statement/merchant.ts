@@ -18,8 +18,6 @@ export interface NormalizedMerchant {
   key: string;
   /** Title-cased key — becomes Expense.name. */
   display: string;
-  /** Cleaner display name that strips common merchant suffixes */
-  cleanDisplay: string;
 }
 
 /**
@@ -61,19 +59,6 @@ const TRAILERS: RegExp[] = [
   /#\s*\d+\b/g,                // store number — '#' makes it unambiguous
   /\b\d{3}-\d{3}-\d{4}\b/g,    // phone
   /\b\d{3}-\d{7}\b/g,
-];
-
-/** Common merchant suffixes that should be stripped for cleaner display */
-const MERCHANT_SUFFIXES: RegExp[] = [
-  /\s+(ONLINE|WEB|NET|COM|INTERNET|DIGITAL|ECOM|E-COM|ECOMM|ECOMMERCE)$/i,
-  /\s+(TEAM|CREW|STAFF|GROUP|ASSOCIATES|PARTNERS|LLC|INC|CORP|CO|COMPANY)$/i,
-  /\s+(STORE|SHOP|MARKET|BOUTIQUE|OUTLET|DEPOT|WAREHOUSE)$/i,
-  /\s+(SERVICE|SERVICES|SOLUTIONS|SYSTEMS|LABS|TECH|TECHNOLOGIES)$/i,
-  /\s+(FOODS|FOOD|DINING|EATS|KITCHEN|GRILL|BAR|CAFE|COFFEE|BREW)$/i,
-  /\s+(PAYMENT|PAY|BILL|BILLING|CHECKOUT|PURCHASE)$/i,
-  /\s+(MOBILE|APP|PORTAL|ACCOUNT|ACCT|BANKING|CARD|VISA|MC|AMEX)$/i,
-  /\s+(ORDER|ORDERS|DELIVERY|SHIPPING|FULFILLMENT)$/i,
-  /\s+(SUPPORT|HELP|CARE|CUSTOMER|CLIENT|SERVICE)$/i,
 ];
 
 const EMBEDDED_DATE = /\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/g;
@@ -127,23 +112,6 @@ function titleCase(s: string): string {
     .join(' ');
 }
 
-function cleanMerchantName(name: string): string {
-  let clean = name;
-  // Apply merchant suffix stripping repeatedly
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const re of MERCHANT_SUFFIXES) {
-      const before = clean;
-      clean = clean.replace(re, '');
-      if (clean !== before) changed = true;
-    }
-  }
-  // Clean up any remaining whitespace
-  clean = clean.replace(/\s+/g, ' ').trim();
-  // If we stripped everything, fall back to original
-  return clean || name;
-}
-
 export function normalizeMerchant(raw: string): NormalizedMerchant {
   let s = (raw ?? '')
     .normalize('NFKD')
@@ -176,7 +144,7 @@ export function normalizeMerchant(raw: string): NormalizedMerchant {
   let tokens = s.split(' ').filter(Boolean);
 
   // Reference numbers and store ids that survived as bare tokens. Kept
-  // deliberately narrow so a real name like MICROSOFT*365 or 7 ELEVEN lives.
+  // deliberately narrow so a real name like MICROSOFT 365 or 7 ELEVEN lives.
   tokens = tokens.filter((t) => {
     const digits = (t.match(/\d/g) ?? []).length;
     if (t.length >= 6 && digits === t.length) return false;  // 0012345678
@@ -213,10 +181,7 @@ export function normalizeMerchant(raw: string): NormalizedMerchant {
   }
 
   const key = tokens.slice(0, MAX_TOKENS).join(' ');
-  const display = titleCase(key);
-  const cleanDisplay = cleanMerchantName(display);
-
-  return { key, display, cleanDisplay };
+  return { key, display: titleCase(key) };
 }
 
 /**
