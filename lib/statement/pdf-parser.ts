@@ -14,17 +14,31 @@ import { groupRows } from './layout';
 import { assembleTransactions } from './table';
 import { buildDiagnostics, evaluateGate, reconciliationFor } from './confidence';
 import { headOf, looksLikePdf } from './detect';
+import { parseDateWith } from './fields';
 import type {
   BankProfile, DateFormat, ParseOptions, ParseResult, StatementParser,
 } from './types';
 
+/**
+ * The pattern's `start`/`end` capture groups are RAW text as printed, not
+ * ISO — a real period header reads "Jan 01, 2026 to Aug 14, 2026", never
+ * "2026-01-01". They're parsed against the profile's own declared
+ * dateFormats, in order, so a bank whose period header uses the same format
+ * as its transaction dates (the common case) needs nothing beyond the
+ * capture groups; a profile without periodPattern just skips automatic
+ * period extraction and dates fall back to "now" for year inference.
+ */
 function extractPeriod(text: string, profile: BankProfile): { start: string; end: string } | null {
   if (!profile.periodPattern) return null;
   const m = profile.periodPattern.exec(text);
-  // The pattern's own named groups decide the shape; a profile without them
-  // just doesn't get automatic period extraction — dates fall back to "now".
   if (!m?.groups?.start || !m?.groups?.end) return null;
-  return { start: m.groups.start, end: m.groups.end };
+
+  for (const format of profile.dateFormats) {
+    const start = parseDateWith(m.groups.start, format);
+    const end = parseDateWith(m.groups.end, format);
+    if (start && end) return { start, end };
+  }
+  return null;
 }
 
 async function parse(bytes: Uint8Array, profile: BankProfile, opts: ParseOptions = {}): Promise<ParseResult> {
