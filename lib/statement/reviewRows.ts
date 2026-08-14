@@ -95,14 +95,31 @@ async function resolveMerchantInfo(keys: string[]): Promise<Record<string, Merch
  *
  * An override skips this entirely: it's the user's own last word, not a
  * default to refine further.
+ *
+ * subcategory always prefers local when it has one — it's a curated brand
+ * match (Lyft, an airline, a car-rental chain) or a reliable structural read
+ * (food that isn't a delivery app is dining), never a guess.
+ *
+ * details is where the merge has to be careful. Two of subcategorize.ts's
+ * branches — dining's catch-all and groceries' only branch — don't identify
+ * anything; they just echo `merchantName` back as the "restaurant"/"store"
+ * because that's the only name available locally. That echo is exactly what
+ * Gemini's `detail` field exists to do better (it can turn a normalized
+ * merchant string into "Chipotle Mexican Grill"), so when local's detail IS
+ * that echo, prefer whatever the Worker returned. A local brand match's
+ * detail (an airline name, 'Lyft') is never an echo of merchantName, so it
+ * keeps winning — that's real local identification, not a placeholder.
  */
 function resolveSubcategory(info: MerchantInfo, raw: string, merchantName: string): { subcategory: string | null; details: Record<string, string> | null } {
   if (info.fromOverride) return { subcategory: info.subcategory, details: info.details };
 
   const local = inferSubcategory(info.category, raw, merchantName);
-  if (local.subcategory || local.details) return local;
+  const subcategory = local.subcategory ?? info.subcategory;
 
-  return { subcategory: info.subcategory, details: info.details };
+  const localIsEcho = !!local.details && Object.values(local.details).includes(merchantName);
+  const details = localIsEcho ? (info.details ?? local.details) : (local.details ?? info.details);
+
+  return { subcategory, details };
 }
 
 export async function buildReviewRows(
