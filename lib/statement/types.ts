@@ -122,6 +122,16 @@ export interface BankProfile {
   periodPattern?: RegExp;
   /** Bank-specific descriptor junk to strip beyond the generic rules. */
   descriptorHints?: RegExp[];
+  /**
+   * Drop items from the first N pages before any row/column work happens.
+   * For a genuine full Chase credit-card statement, pages 1-2 are cover
+   * material (offers, account summary, a legal/notices page) with no
+   * transaction table — `skipPages: 2` starts parsing at page 3, where
+   * ACCOUNT ACTIVITY actually begins. Not needed for an excerpt that
+   * already starts at the right page (an upload beginning exactly at the
+   * activity table has nothing to skip).
+   */
+  skipPages?: number;
 }
 
 // ── Parse results ───────────────────────────────────────────
