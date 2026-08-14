@@ -57,6 +57,14 @@ export async function extractPdfItems(
         diagnostics: {},
       };
     }
+    // Genuinely unexpected — not a document problem the confidence gate's
+    // named checks can attribute (those all assume the file opened). Logged
+    // rather than swallowed silently: this exact catch is what surfaced a
+    // real bundler bug (see metro.config.js) as an opaque "could not be
+    // opened as a PDF" with no way to tell a bad file from a broken build.
+    // Never includes document content — only pdf.js's own error object.
+    // eslint-disable-next-line no-console
+    console.error('[statement] unexpected failure opening PDF:', err);
     return {
       ok: false,
       code: 'parse_failed',
