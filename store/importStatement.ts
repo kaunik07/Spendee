@@ -25,6 +25,8 @@ export interface ImportRow {
   rawDescription: string;
   category: string;
   subcategory?: string | null;
+  /** From lib/statement/subcategorize.ts — airline, cab provider, restaurant, store... */
+  details?: Record<string, string> | null;
   date: string;             // YYYY-MM-DD
   amount: number;           // positive; only debits ever reach this function
   /** From lib/statement/fingerprint.ts — the duplicate-detection key. */
@@ -92,6 +94,7 @@ export async function commitStatementImport(params: CommitImportParams): Promise
     // order arbitrary.
     created_at: now + i,
     subcategory: r.subcategory ?? null,
+    details: r.details ?? null,
     import_fingerprint: r.fingerprint,
     linked_transaction_id: linkedTransactionIds[i],
   }));
