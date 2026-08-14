@@ -37,8 +37,13 @@ interface Env extends CategorizeEnv {
 const ALLOWED_ORIGINS = [
   /^https:\/\/spendee\.pages\.dev$/,
   /^https:\/\/[a-z0-9-]+\.spendee\.pages\.dev$/,   // Cloudflare Pages preview deploys
-  /^http:\/\/localhost:8081$/,                       // expo start --web
-  /^http:\/\/127\.0\.0\.1:8081$/,
+  // Any port, not just 8081 — expo start --web falls back to another port
+  // whenever 8081 is already taken by a different local project, which a
+  // hardcoded single port silently broke categorization for (no visible
+  // error beyond a browser console CORS message, since the review screen's
+  // own fallback-to-'other' on a failed /categorize call swallows it).
+  /^http:\/\/localhost:\d+$/,
+  /^http:\/\/127\.0\.0\.1:\d+$/,
 ];
 
 function corsHeaders(origin: string | null): HeadersInit {
