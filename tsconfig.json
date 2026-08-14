@@ -13,5 +13,13 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    // A separate package with its own tsconfig.json (@cloudflare/workers-types,
+    // no DOM lib). Its globals (DurableObjectNamespace, ExecutionContext, ...)
+    // don't exist in this app's browser/RN environment and vice versa —
+    // running it through this config produces spurious cross-project errors.
+    "worker"
   ]
 }

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
 import { getQueue, materializeRows, pendingBalanceDeltas } from './syncQueue';
 import { subscribeSync } from './syncBus';
+import type { BankId, DocType } from '@/lib/statement/types';
 
 export interface CreditCard {
   id: string;
@@ -13,6 +14,15 @@ export interface CreditCard {
   creditLimit: number | null;  // optional, for utilization display
   billingDay: number | null;   // payment due day-of-month (1–31), for reminders
   createdAt: number;
+  // Which bank issued this card, so statement import knows which parser
+  // profile to use without asking on every import. Set once, either when the
+  // card is created or inline the first time it's used to import (see
+  // app/import-statement.web.tsx). Cards created before this feature existed
+  // have `bank: null` until then.
+  bank: BankId | null;
+  // Per-card override of the user's global default document type
+  // (store/useImportPrefs.ts). Null means "use the global default".
+  defaultDocType: DocType | null;
 }
 
 function rowToCard(row: any): CreditCard {
@@ -23,6 +33,8 @@ function rowToCard(row: any): CreditCard {
     creditLimit:        row.credit_limit != null ? Number(row.credit_limit) : null,
     billingDay:         row.billing_day != null ? Number(row.billing_day) : null,
     createdAt:          row.created_at,
+    bank:               row.bank ?? null,
+    defaultDocType:     row.default_doc_type ?? null,
   };
 }
 
@@ -88,6 +100,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
     outstandingBalance: number,
     creditLimit: number | null,
     billingDay: number | null = null,
+    bank: BankId | null = null,
   ) => {
     if (storageMode === 'local') {
       const entry: CreditCard = {
@@ -97,6 +110,8 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
         creditLimit,
         billingDay,
         createdAt: Date.now(),
+        bank,
+        defaultDocType: null,
       };
       const updated = [...cards, entry];
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
@@ -109,6 +124,7 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
         credit_limit:        creditLimit,
         billing_day:         billingDay,
         created_at:          Date.now(),
+        bank,
       }).select().single();
       if (data) setCards((prev) => [...prev, rowToCard(data)]);
     }
@@ -123,6 +139,34 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
     } else {
       await supabase.from('credit_cards').update({ billing_day: billingDay }).eq('id', id);
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, billingDay } : c)));
+    }
+  }, [storageMode, cards, localKey]);
+
+  /**
+   * Records which bank issued this card. Called from the import screen the
+   * first time a `bank: null` card is used, so the question is asked at most
+   * once per card (see app/import-statement.web.tsx).
+   */
+  const setCardBank = useCallback(async (id: string, bank: BankId) => {
+    if (storageMode === 'local') {
+      const updated = cards.map((c) => (c.id === id ? { ...c, bank } : c));
+      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
+      setCards(updated);
+    } else {
+      await supabase.from('credit_cards').update({ bank }).eq('id', id);
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, bank } : c)));
+    }
+  }, [storageMode, cards, localKey]);
+
+  /** Per-card override of the global default document type. `null` clears the override. */
+  const setCardDefaultDocType = useCallback(async (id: string, defaultDocType: DocType | null) => {
+    if (storageMode === 'local') {
+      const updated = cards.map((c) => (c.id === id ? { ...c, defaultDocType } : c));
+      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
+      setCards(updated);
+    } else {
+      await supabase.from('credit_cards').update({ default_doc_type: defaultDocType }).eq('id', id);
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, defaultDocType } : c)));
     }
   }, [storageMode, cards, localKey]);
 
@@ -163,5 +207,8 @@ export function useCreditCards(userId: string | null, storageMode: StorageMode |
 
   const totalOutstanding = cards.reduce((sum, c) => sum + c.outstandingBalance, 0);
 
-  return { cards, loading, refresh, addCard, updateCard, setBillingDay, deleteCard, totalOutstanding };
+  return {
+    cards, loading, refresh, addCard, updateCard, setBillingDay,
+    setCardBank, setCardDefaultDocType, deleteCard, totalOutstanding,
+  };
 }

@@ -5,20 +5,27 @@ import { supabase } from '@/lib/supabase';
 import { StorageMode } from './storageMode';
 import { getQueue, materializeRows, pendingBalanceDeltas } from './syncQueue';
 import { subscribeSync } from './syncBus';
+import type { BankId, DocType } from '@/lib/statement/types';
 
 export interface BankAccount {
   id: string;
   name: string;
   balance: number;
   createdAt: number;
+  // See CreditCard.bank in store/useCreditCards.ts — same idea, statement
+  // import needs to know which parser profile to use.
+  bank: BankId | null;
+  defaultDocType: DocType | null;
 }
 
 function rowToAccount(row: any): BankAccount {
   return {
-    id:        row.id,
-    name:      row.name,
-    balance:   Number(row.balance),
-    createdAt: row.created_at,
+    id:             row.id,
+    name:           row.name,
+    balance:        Number(row.balance),
+    createdAt:      row.created_at,
+    bank:           row.bank ?? null,
+    defaultDocType: row.default_doc_type ?? null,
   };
 }
 
@@ -81,19 +88,45 @@ export function useAccounts(userId: string | null, storageMode: StorageMode | nu
     }
   }, [userId, storageMode, refreshKey]);
 
-  const addAccount = useCallback(async (name: string, balance: number) => {
+  const addAccount = useCallback(async (name: string, balance: number, bank: BankId | null = null) => {
     if (storageMode === 'local') {
-      const entry: BankAccount = { id: Crypto.randomUUID(), name: name.trim(), balance, createdAt: Date.now() };
+      const entry: BankAccount = {
+        id: Crypto.randomUUID(), name: name.trim(), balance, createdAt: Date.now(),
+        bank, defaultDocType: null,
+      };
       const updated = [...accounts, entry];
       await AsyncStorage.setItem(localKey, JSON.stringify(updated));
       setAccounts(updated);
     } else {
       const { data } = await supabase.from('bank_accounts').insert({
-        user_id: userId, name: name.trim(), balance, created_at: Date.now(),
+        user_id: userId, name: name.trim(), balance, created_at: Date.now(), bank,
       }).select().single();
       if (data) setAccounts((prev) => [...prev, rowToAccount(data)]);
     }
   }, [userId, storageMode, accounts, localKey]);
+
+  /** See setCardBank in store/useCreditCards.ts. */
+  const setAccountBank = useCallback(async (id: string, bank: BankId) => {
+    if (storageMode === 'local') {
+      const updated = accounts.map((a) => (a.id === id ? { ...a, bank } : a));
+      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
+      setAccounts(updated);
+    } else {
+      await supabase.from('bank_accounts').update({ bank }).eq('id', id);
+      setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, bank } : a)));
+    }
+  }, [storageMode, accounts, localKey]);
+
+  const setAccountDefaultDocType = useCallback(async (id: string, defaultDocType: DocType | null) => {
+    if (storageMode === 'local') {
+      const updated = accounts.map((a) => (a.id === id ? { ...a, defaultDocType } : a));
+      await AsyncStorage.setItem(localKey, JSON.stringify(updated));
+      setAccounts(updated);
+    } else {
+      await supabase.from('bank_accounts').update({ default_doc_type: defaultDocType }).eq('id', id);
+      setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, defaultDocType } : a)));
+    }
+  }, [storageMode, accounts, localKey]);
 
   const updateAccount = useCallback(async (id: string, name: string, balance: number) => {
     if (storageMode === 'local') {
@@ -119,5 +152,8 @@ export function useAccounts(userId: string | null, storageMode: StorageMode | nu
 
   const netWorth = accounts.reduce((sum, a) => sum + a.balance, 0);
 
-  return { accounts, loading, refresh, addAccount, updateAccount, deleteAccount, netWorth };
+  return {
+    accounts, loading, refresh, addAccount, updateAccount,
+    setAccountBank, setAccountDefaultDocType, deleteAccount, netWorth,
+  };
 }
