@@ -1,22 +1,20 @@
-// Statement import — web only. See lib/statement/README (the module
-// doc-comments) for why: extraction runs entirely in the browser, so the
-// statement PDF never leaves the machine, and only normalized merchant name
-// strings ever reach the Worker.
+// Statement import — web only. See lib/statement/profiles/chase.ts's
+// module doc-comments for why: extraction runs entirely in the browser, so
+// the statement PDF never leaves the machine, and only normalized merchant
+// name strings ever reach the Worker.
 //
 // State machine: idle -> parsing -> review -> committing -> done | error.
 // This file covers idle/parsing/error; review/committing/done are built in
-// the commits that follow, once there's a live bank profile to reach them
-// with (see lib/statement/registry.ts — every profile today is
-// 'in_development', so the dropzone below is honest about not being usable
-// yet rather than pretending otherwise).
+// the commits that follow. Chase statement (docType 'statement') is the
+// only live profile right now — Chase spending report is paused (see
+// lib/statement/profiles/chase.ts and worker/README.md's "Supported
+// documents" section) and Bank of America is listed but disabled.
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import { useAccountsContext } from '@/store/AccountsContext';
-import { useAuthContext } from '@/store/AuthContext';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
-import { useImportPrefs } from '@/store/useImportPrefs';
 import { resolveProfile, detectParser } from '@/lib/statement/registry';
 import { headOf } from '@/lib/statement/detect';
 import type { BankId, DocType, SourceKind } from '@/lib/statement/types';
@@ -35,14 +33,11 @@ type ScreenState =
   | { phase: 'error'; message: string };
 
 export default function ImportStatementScreen() {
-  const { user } = useAuthContext();
-  const { accounts, setAccountBank, setAccountDefaultDocType } = useAccountsContext();
-  const { cards, setCardBank, setCardDefaultDocType } = useCreditCardsContext();
-  const { prefs, setDefaultDocType: setGlobalDefaultDocType } = useImportPrefs(user?.id ?? null);
+  const { accounts, setAccountBank } = useAccountsContext();
+  const { cards, setCardBank } = useCreditCardsContext();
 
   const [kind, setKind] = useState<SourceKind | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(null);
-  const [docType, setDocType] = useState<DocType | null>(null);
   const [screen, setScreen] = useState<ScreenState>({ phase: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -52,12 +47,15 @@ export default function ImportStatementScreen() {
     return cards.find((c) => c.id === sourceId) ?? null;
   }, [kind, sourceId, accounts, cards]);
 
-  // Resolve the doc-type control's value the first time a source is picked,
-  // from the card's own override, else the global preference, else 'statement'.
-  const effectiveDocType: DocType = docType ?? selected?.defaultDocType ?? prefs.defaultDocType;
+  // Statement only for now — spending report is paused (see
+  // lib/statement/profiles/chase.ts and worker/README.md's "Supported
+  // documents" section), so there's nothing left to pick here. The doc-type
+  // picker step, and the per-card/global default-type preference it used to
+  // write to, come back together when spending report is re-enabled.
+  const effectiveDocType: DocType = 'statement';
 
   const bank = selected?.bank ?? null;
-  const profileLookup = bank && effectiveDocType && kind
+  const profileLookup = bank && kind
     ? resolveProfile(bank, kind, effectiveDocType)
     : null;
   const canDrop = profileLookup?.status === 'live';
@@ -65,26 +63,16 @@ export default function ImportStatementScreen() {
   const handlePickKind = (k: SourceKind) => {
     setKind(k);
     setSourceId(null);
-    setDocType(null);
   };
 
   const handlePickSource = (id: string) => {
     setSourceId(id);
-    setDocType(null); // re-resolve from the newly-selected record's own override
   };
 
   const handleSetBank = async (b: BankId) => {
     if (!selected || !kind) return;
     if (kind === 'bank_account') await setAccountBank(selected.id, b);
     else await setCardBank(selected.id, b);
-  };
-
-  const handleSetDocType = async (dt: DocType, asDefault: boolean) => {
-    setDocType(dt);
-    if (asDefault && selected && kind) {
-      if (kind === 'bank_account') await setAccountDefaultDocType(selected.id, dt);
-      else await setCardDefaultDocType(selected.id, dt);
-    }
   };
 
   const handleFile = async (file: File) => {
@@ -201,8 +189,8 @@ export default function ImportStatementScreen() {
           <Text style={styles.stepHint}>Asked once — saved to this {kind === 'credit_card' ? 'card' : 'account'} so it isn't asked again.</Text>
           <View style={styles.toggleRow}>
             {KNOWN_BANKS.map((b) => {
-              const supported = resolveProfile(b.id, kind!, 'statement').status !== 'unsupported'
-                || resolveProfile(b.id, kind!, 'spending_report').status !== 'unsupported';
+              // Only 'statement' matters right now — spending report is paused.
+              const supported = resolveProfile(b.id, kind!, 'statement').status !== 'unsupported';
               return (
                 <Pressable
                   key={b.id}
@@ -218,42 +206,22 @@ export default function ImportStatementScreen() {
         </>
       )}
 
-      {/* Step 3 — document type */}
-      {selected && bank && (
-        <>
-          <Text style={styles.stepLabel}>3. What kind of document is this?</Text>
-          <View style={styles.toggleRow}>
-            {([
-              { dt: 'statement' as DocType, label: 'Statement' },
-              { dt: 'spending_report' as DocType, label: 'Spending Report' },
-            ]).map(({ dt, label }) => {
-              const isSelected = effectiveDocType === dt;
-              return (
-                <Pressable
-                  key={dt}
-                  onPress={() => handleSetDocType(dt, true)}
-                  style={[styles.toggleBtn, isSelected && styles.toggleBtnSelectedPrimary]}>
-                  <Text style={[styles.toggleBtnText, isSelected && styles.toggleBtnTextSelectedPrimary]}>{label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {profileLookup?.status === 'in_development' && (
-            <Text style={styles.underDevNote}>
-              {profileLookup.profile.label} isn't ready yet — this combination is on the list but still being finalized.
-            </Text>
-          )}
-          {profileLookup?.status === 'unsupported' && (
-            <Text style={styles.underDevNote}>This bank doesn't support that document type.</Text>
-          )}
-        </>
+      {/* Document-type step is paused along with the spending report
+          profile — statement is the only option, so there's nothing to
+          pick. Only a status note shows if the statement profile itself
+          isn't live for this bank. */}
+      {selected && bank && profileLookup?.status !== 'live' && (
+        <Text style={styles.underDevNote}>
+          {profileLookup?.status === 'in_development'
+            ? `${profileLookup.profile.label} isn't ready yet — this bank is on the list but still being finalized.`
+            : "This bank doesn't support statement import yet."}
+        </Text>
       )}
 
-      {/* Step 4 — the file */}
+      {/* Step 3 — the file */}
       {selected && bank && (
         <>
-          <Text style={styles.stepLabel}>4. Drop the statement</Text>
+          <Text style={styles.stepLabel}>3. Drop the statement</Text>
           <Pressable
             disabled={!canDrop}
             onPress={() => inputRef.current?.click()}
