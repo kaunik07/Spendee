@@ -86,7 +86,7 @@ export interface ColumnRule {
 export type DateFormat =
   | 'MM/DD' | 'MM/DD/YY' | 'MM/DD/YYYY'
   | 'DD/MM/YY' | 'DD/MM/YYYY'
-  | 'YYYY-MM-DD' | 'DD-MMM-YYYY' | 'MMM DD';
+  | 'YYYY-MM-DD' | 'DD-MMM-YYYY' | 'MMM DD' | 'MMM DD, YYYY';
 
 /** How to decide whether a row is money out or money in. */
 export type SignRule =

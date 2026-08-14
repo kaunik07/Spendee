@@ -54,12 +54,22 @@ export function parseAmount(raw: string): ParsedAmount | null {
   if (t.endsWith('-')) { credit = true; t = t.slice(0, -1).trim(); }
   else if (t.endsWith('+')) { t = t.slice(0, -1).trim(); }
 
-  // Leading sign
+  // A leading sign can appear before OR after the currency symbol — Chase's
+  // own spending report prints refunds as "$-51.30", sign after the symbol,
+  // which a sign-then-currency check alone misses entirely (the sign check
+  // sees "$-51.30", doesn't start with '-', moves on; then currency-strip
+  // leaves "-51.30", which the money pattern rejects since it doesn't allow
+  // a leading minus — the amount silently fails to parse). So: strip a
+  // leading sign, THEN strip currency, THEN check for a sign again on
+  // whatever's left, catching either ordering.
   if (t.startsWith('-')) { credit = true; t = t.slice(1).trim(); }
   else if (t.startsWith('+')) { t = t.slice(1).trim(); }
 
   const hadCurrency = CURRENCY.test(t);
   t = t.replace(CURRENCY, '');
+
+  if (t.startsWith('-')) { credit = true; t = t.slice(1).trim(); }
+  else if (t.startsWith('+')) { t = t.slice(1).trim(); }
 
   if (!MONEY.test(t)) {
     // A currency symbol is proof enough for a whole-unit amount like "$25".
@@ -92,6 +102,10 @@ const DATE_RES: Record<DateFormat, RegExp> = {
   'YYYY-MM-DD':  /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
   'DD-MMM-YYYY': /^(\d{1,2})[- ]([A-Za-z]{3,})[- ](\d{4})$/,
   'MMM DD':      /^([A-Za-z]{3,})\s+(\d{1,2})$/,
+  // Chase's spending report: "Mar 29, 2026" — three whitespace tokens once
+  // split naively, which is exactly why isDateLikePrefix below can't reuse
+  // single-token candidate detection.
+  'MMM DD, YYYY': /^([A-Za-z]{3,})\s+(\d{1,2}),\s*(\d{4})$/,
 };
 
 /**
@@ -154,6 +168,10 @@ export function parseDateWith(
       const mo = MONTH_NAMES[m[1].slice(0, 3).toLowerCase()];
       return mo ? isoDate(yearFor(mo, period), mo, +m[2]) : null;
     }
+    case 'MMM DD, YYYY': {
+      const mo = MONTH_NAMES[m[1].slice(0, 3).toLowerCase()];
+      return mo ? isoDate(+m[3], mo, +m[2]) : null;
+    }
   }
 }
 
@@ -162,6 +180,29 @@ export function isDateLike(s: string): boolean {
   const t = s.trim();
   for (const re of Object.values(DATE_RES)) if (re.test(t)) return true;
   return false;
+}
+
+/**
+ * Does this text START WITH something date-shaped — checked before any
+ * column split exists, so it can't assume a date is one whitespace token.
+ *
+ * DATE_RES entries are anchored `^...$` because they validate an isolated
+ * cell's exact value; that anchoring is exactly wrong here; "Mar 29, 2026"
+ * is three whitespace-separated tokens, so testing `isDateLike(tokens[0])`
+ * against just "Mar" never matches. This is the un-anchored-at-the-end
+ * sibling: does the row's text open with a run that looks like a date,
+ * regardless of what follows.
+ */
+const DATE_PREFIX_RES: RegExp[] = [
+  /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/,        // MM/DD, MM/DD/YY(YY), DD/MM/...
+  /^\d{4}-\d{1,2}-\d{1,2}\b/,                     // YYYY-MM-DD
+  /^\d{1,2}[- ][A-Za-z]{3,}[- ]\d{4}\b/,           // DD-MMM-YYYY
+  /^[A-Za-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?\b/,       // MMM DD, or MMM DD, YYYY
+];
+
+export function isDateLikePrefix(text: string): boolean {
+  const t = text.trim();
+  return DATE_PREFIX_RES.some((re) => re.test(t));
 }
 
 export interface DateFormatChoice {
