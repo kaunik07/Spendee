@@ -3,9 +3,9 @@
 // bank's specifics, which is what makes this file testable against a
 // synthetic profile and reusable unchanged once a real Chase profile exists.
 
-import { isAmountLike, isDateLike, parseAmount, parseDateWith, pickDateFormat, StatementPeriod } from './fields';
+import { isAmountLike, isDateLike, isDateLikePrefix, parseAmount, parseDateWith, pickDateFormat, StatementPeriod } from './fields';
 import { cellsOf, Column, inferColumns, Row } from './layout';
-import type { BankProfile, ColumnRole, DateFormat, RawTxn, SectionRule } from './types';
+import type { BankProfile, ColumnRole, DateFormat, Direction, RawTxn, SectionRule } from './types';
 
 export interface AssembleResult {
   txns: RawTxn[];
@@ -23,7 +23,7 @@ export interface AssembleResult {
 
 /**
  * A loose, column-free filter: does this row's text READ like a transaction
- * — a date-shaped leading token, and an amount-shaped token somewhere in it?
+ * — a date-shaped opening, and an amount-shaped token somewhere in it?
  *
  * This runs BEFORE column inference and is why it has to work off raw text
  * rather than cells. Running inferColumns over every row on the page —
@@ -33,11 +33,19 @@ export interface AssembleResult {
  * inferColumns saw no gap there and merged the two into one column. Feeding
  * it only rows that already look like transactions is what layout.ts's own
  * inferColumns docstring warns is required, and what this function supplies.
+ *
+ * The date check uses the row's leading TEXT, not its first whitespace
+ * token — a real gap this had until tested against a document whose dates
+ * are three tokens ("Mar 29, 2026"): `isDateLike(tokens[0])` tests only
+ * "Mar" against patterns that all expect a complete date, so it never
+ * matched and every row in the document was silently rejected as a
+ * candidate. isDateLikePrefix checks whether the row's text OPENS with a
+ * date shape, regardless of how many tokens that shape spans.
  */
 function looksLikeTransactionRow(row: Row): boolean {
   const tokens = row.text.trim().split(/\s+/);
   if (!tokens.length) return false;
-  return isDateLike(tokens[0]) && tokens.some((t) => isAmountLike(t));
+  return isDateLikePrefix(row.text) && tokens.some((t) => isAmountLike(t));
 }
 
 /**
@@ -45,21 +53,35 @@ function looksLikeTransactionRow(row: Row): boolean {
  * the profile's declared column headers. Falls back to position (first
  * column is the date, last is treated as an amount candidate) when no header
  * row is found — the case a header-less signed-column statement needs.
+ *
+ * A real bug lived here until tested against a document with an explicitly
+ * IGNORED middle column: Chase's spending report has Posted Date between
+ * Transaction Date and Description, and the profile correctly matches it to
+ * role 'ignore'. But the positional-fallback pass below couldn't tell
+ * "still the untouched default, header matching found nothing for this
+ * column" apart from "the header matched, and what it matched to WAS
+ * ignore" — both look identical as `roles[i] === 'ignore'`. So the fallback
+ * treated Posted Date's column as unresolved and overwrote it with
+ * 'description', and every transaction's description field silently became
+ * its posted date instead of its actual merchant text. `matched[]` tracks
+ * which columns a header rule actually touched, so the fallback only ever
+ * applies to genuinely unmatched columns.
  */
 function assignRoles(headerRow: Row | null, columns: Column[], profile: BankProfile): ColumnRole[] {
   const roles: ColumnRole[] = columns.map(() => 'ignore');
+  const matched: boolean[] = columns.map(() => false);
   if (headerRow) {
     const headerCells = cellsOf(headerRow, columns);
     for (let i = 0; i < headerCells.length; i++) {
       const match = profile.columns.find((c) => c.header.test(headerCells[i]));
-      if (match) roles[i] = match.role;
+      if (match) { roles[i] = match.role; matched[i] = true; }
     }
   }
-  // Positional fallback for anything a header pass didn't resolve.
-  if (roles[0] === 'ignore') roles[0] = 'date';
+  // Positional fallback ONLY for columns a header rule never touched.
+  if (!matched[0]) roles[0] = 'date';
   const lastIdx = roles.length - 1;
-  if (lastIdx > 0 && roles[lastIdx] === 'ignore') roles[lastIdx] = 'amount';
-  for (let i = 1; i < lastIdx; i++) if (roles[i] === 'ignore') roles[i] = 'description';
+  if (lastIdx > 0 && !matched[lastIdx]) roles[lastIdx] = 'amount';
+  for (let i = 1; i < lastIdx; i++) if (!matched[i]) roles[i] = 'description';
   return roles;
 }
 
@@ -73,20 +95,59 @@ function findHeaderRow(rows: Row[], columns: Column[], profile: BankProfile): Ro
   return null;
 }
 
-/** Finds the printed total for a section, e.g. matching /total fees charged/i against row text. */
-function findPrintedTotal(rows: Row[], rule: SectionRule): number | null {
+/**
+ * Finds the printed total for one OCCURRENCE of a section, searching only
+ * the row range that occurrence spans — never the whole document.
+ *
+ * This scoping is load-bearing, not defensive. A real Chase spending report
+ * prints a "Total $X.XX" line after every one of its 12 categories, using
+ * the exact same wording each time — so a totalLabel pattern generic enough
+ * to match all of them (`/^Total\b/i`) also matches all twelve if the search
+ * isn't scoped. An earlier version searched the whole document unconditionally
+ * and returned whichever "Total" line came first for every section — which,
+ * on that document, is the *grand total* line in the summary table, since it
+ * sits before any category heading. Every section reconciled against $12,122.05
+ * instead of its own total, which would have failed every real import.
+ */
+function findPrintedTotal(rows: Row[], rule: SectionRule, range: { start: number; end: number }): number | null {
   if (!rule.totalLabel) return null;
-  for (const r of rows) {
+  for (let i = range.start; i < range.end; i++) {
+    const r = rows[i];
     if (!rule.totalLabel.test(r.text)) continue;
     // The amount is whichever token in the row parses as money — search from
     // the end, since a label like "Total Purchases $31.73" has the number last.
     const tokens = r.text.split(/\s+/);
-    for (let i = tokens.length - 1; i >= 0; i--) {
-      const amt = parseAmount(tokens[i]);
+    for (let j = tokens.length - 1; j >= 0; j--) {
+      const amt = parseAmount(tokens[j]);
       if (amt) return amt.value;
     }
   }
   return null;
+}
+
+/**
+ * Direction per profile.signConvention. 'section' (the default, and the only
+ * mode a prior version supported) trusts the section's own direction
+ * unconditionally — right for a document organized by transaction TYPE
+ * (purchases vs. payments), wrong for one organized by spending CATEGORY.
+ * A Chase spending report is the latter: every category section is a mix of
+ * ordinary debits and the occasional refund, printed as a negative amount
+ * inline in the SAME section — so direction has to come from the row's own
+ * sign, not from which section it's in. That's `signed`: it reads straight
+ * off `ParsedAmount.credit`, which already carries exactly this information.
+ */
+function resolveDirection(profile: BankProfile, section: SectionRule, amountRole: ColumnRole, credit: boolean): Direction {
+  switch (profile.signConvention.type) {
+    case 'signed':
+      return credit ? 'credit' : 'debit';
+    case 'named_columns':
+      if (amountRole === 'credit') return 'credit';
+      if (amountRole === 'debit') return 'debit';
+      return section.direction; // header matching didn't land on a debit/credit column — fall back
+    case 'section':
+    default:
+      return section.direction;
+  }
 }
 
 export function assembleTransactions(
@@ -103,16 +164,33 @@ export function assembleTransactions(
 
   // Which section, if any, each row falls under — tracked as we walk the
   // document in order, since a section runs from its opening heading to the
-  // next one (or the next section's heading, or end of document).
+  // next one (or the next section's heading, or end of document). Also
+  // records each occurrence's row RANGE (open index -> close index), which
+  // findPrintedTotal needs to avoid matching a different section's total —
+  // see its docstring for why an unscoped search is a real bug, not a
+  // hypothetical one.
   let currentSection: SectionRule | null = null;
+  let currentRangeStart = -1;
   const sectionRowIndices = new Map<string, number[]>();
+  const sectionRanges: { id: string; start: number; end: number }[] = [];
+
+  const closeRange = (end: number) => {
+    if (currentSection && currentRangeStart >= 0) {
+      sectionRanges.push({ id: currentSection.id, start: currentRangeStart, end });
+    }
+  };
 
   const candidateDates: string[] = [];
   const bodyRowIdx: number[] = [];
 
   rows.forEach((row, i) => {
     const opened = profile.sections.find((s) => s.opens.test(row.text));
-    if (opened) { currentSection = opened; return; } // the heading row itself carries no data
+    if (opened) {
+      closeRange(i);
+      currentSection = opened;
+      currentRangeStart = i + 1; // the heading row itself carries no data
+      return;
+    }
     if (!currentSection) return;
 
     const cells = cellsOf(row, columns);
@@ -128,6 +206,7 @@ export function assembleTransactions(
       sectionRowIndices.set(currentSection.id, list);
     }
   });
+  closeRange(rows.length); // the last section runs to end of document
 
   const dateChoice = dateFormatOverride
     ? { format: dateFormatOverride, ambiguous: false, parseRate: 1 }
@@ -176,7 +255,7 @@ export function assembleTransactions(
         date: isoDate,
         description,
         amount: amt.value,
-        direction: section.direction,
+        direction: resolveDirection(profile, section, roles[amountIdx], amt.credit),
         section: section.id,
         page: row.page,
         row: idx,
@@ -185,9 +264,10 @@ export function assembleTransactions(
   }
 
   const printedTotals: Record<string, number> = {};
-  for (const section of profile.sections) {
-    if (!section.totalLabel) continue;
-    const total = findPrintedTotal(rows, section);
+  for (const range of sectionRanges) {
+    const section = profile.sections.find((s) => s.id === range.id);
+    if (!section?.totalLabel) continue;
+    const total = findPrintedTotal(rows, section, range);
     if (total != null) printedTotals[section.id] = total;
   }
 
