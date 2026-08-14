@@ -1,6 +1,7 @@
 // Web override of the Home dashboard. Same data/hooks as index.tsx (mobile),
 // laid out per the approved sidebar + multi-column dashboard design instead
 // of a single-column card stack.
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -159,7 +160,7 @@ export default function HomeScreenWeb() {
               return (
                 <View key={e.id} style={styles.expenseRow}>
                   <View style={[styles.expenseIcon, { backgroundColor: cat.color + '22' }]}>
-                    <Text>{cat.emoji}</Text>
+                    <MaterialCommunityIcons name={cat.icon as any} size={16} color={cat.color} />
                   </View>
                   <View style={styles.expenseMid}>
                     <Text style={styles.expenseName} numberOfLines={1}>{e.name}</Text>
