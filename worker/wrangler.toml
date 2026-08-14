@@ -1,0 +1,32 @@
+name = "spendee-statements"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+# Keys are secrets, never put them here:
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put GEMINI_API_KEY_2
+#   npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+
+# Neither of these is a secret — both already ship inside the app bundle
+# (lib/supabase.ts). What makes this Worker's access sensitive is
+# SUPABASE_SERVICE_ROLE_KEY above, not either of these. The anon key is used
+# only to call GET /auth/v1/user with the caller's own bearer token, to
+# verify who is calling (see src/auth.ts) — it never grants elevated access.
+[vars]
+SUPABASE_URL      = "https://csjccrztxcfnthmahxhr.supabase.co"
+SUPABASE_ANON_KEY = "sb_publishable_u0B2L-1jiyCO7NRYz6-vDg_yE3t5LDX"
+
+# Per-user daily parse guard and the shared monthly Gemini cap. A Durable Object rather
+# than KV because KV is eventually consistent: two requests landing together could both
+# read the same stale total and both decide there was room under the cap. See
+# Trip Planner's worker/src/quota.ts, which this generalizes (month= -> period=, so one
+# class serves a daily counter too).
+[[durable_objects.bindings]]
+name = "QUOTA"
+class_name = "QuotaCounter"
+
+# SQLite-backed, which is what makes Durable Objects free on the Workers Free plan.
+# Never re-tag an applied migration — add a new one.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["QuotaCounter"]
