@@ -183,7 +183,11 @@ export default function ImportStatementScreen() {
         subcategory: r.subcategory,
         details: r.details,
         date: r.raw.date,
-        amount: r.raw.amount,
+        // Signed — negative for a refund, so it nets correctly against
+        // category/budget totals. Payments never reach here at all
+        // (isCredit rows are excluded from `included` by default and this
+        // screen has no toggle that flips them in).
+        amount: r.signedAmount,
         fingerprint: r.fingerprint,
       }));
 

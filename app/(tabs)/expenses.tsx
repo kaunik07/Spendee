@@ -19,6 +19,7 @@ import { useAuthContext } from '@/store/AuthContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { useExpenseActions } from '@/store/useExpenseActions';
 import { Expense } from '@/store/useExpenses';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 
 const PENDING_AMBER = '#FFB74D';
 
@@ -190,7 +191,7 @@ function ExpenseRow({ item, onDelete }: { item: Expense; onDelete: () => void })
       </View>
 
       <View style={styles.expenseRight}>
-        <Text style={styles.expenseAmount}>-${item.amount.toFixed(2)}</Text>
+        <Text style={[styles.expenseAmount, { color: signedAmountColor(item.amount) }]}>{formatSignedAmount(item.amount)}</Text>
         <Pressable onPress={onDelete} hitSlop={10} style={styles.deleteBtn}>
           <MaterialCommunityIcons name="trash-can-outline" size={16} color={Colors.outline} />
         </Pressable>

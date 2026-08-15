@@ -15,6 +15,7 @@ import { getSubcategoryById } from '@/constants/subcategories';
 import { Colors, getCategoryById } from '@/constants/theme';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { Expense } from '@/store/useExpenses';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 
 const H_PAD = 18;
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -383,7 +384,7 @@ function DayExpenseRow({ item, showDate }: { item: Expense; showDate?: boolean }
         {item.note ? <Text style={styles.expenseNote} numberOfLines={1}>{item.note}</Text> : null}
       </View>
       <View style={styles.expenseRight}>
-        <Text style={styles.expenseAmount}>-${item.amount.toFixed(2)}</Text>
+        <Text style={[styles.expenseAmount, { color: signedAmountColor(item.amount) }]}>{formatSignedAmount(item.amount)}</Text>
         {showDate && (
           <Text style={styles.expenseDate}>
             {new Date(item.date + 'T00:00:00').toLocaleDateString('default', { month: 'short', day: 'numeric' })}

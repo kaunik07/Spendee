@@ -17,6 +17,7 @@ import { Categories, Colors, getCategoryById } from '@/constants/theme';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { useExpenseActions } from '@/store/useExpenseActions';
 import { Expense } from '@/store/useExpenses';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 
 const PENDING_AMBER = '#FFB74D';
 
@@ -198,7 +199,7 @@ export default function ExpensesScreenWeb() {
                     {isToday ? 'Today' : formatGroupDate(date)}
                   </Text>
                   <Text style={[styles.groupHeaderTotal, isToday && styles.groupHeaderTextToday]}>
-                    -${groupTotal.toFixed(2)}
+                    {formatSignedAmount(groupTotal)}
                   </Text>
                 </View>
                 {items.map((item) => (
@@ -344,7 +345,7 @@ function ExpenseRow({ item, highlight, onDelete, onOpen }: { item: Expense; high
         )}
       </View>
       <Text style={[styles.rowText, { flex: 1.4, color: cat.color }]} numberOfLines={1}>{displayLabel}</Text>
-      <Text style={[styles.rowAmt, { flex: 1 }]}>-${item.amount.toFixed(2)}</Text>
+      <Text style={[styles.rowAmt, { flex: 1, color: signedAmountColor(item.amount) }]}>{formatSignedAmount(item.amount)}</Text>
       <Pressable onPress={(e) => { e.stopPropagation?.(); onDelete(); }} hitSlop={8} style={{ width: 32, alignItems: 'flex-end' }}>
         <MaterialCommunityIcons name="trash-can-outline" size={16} color={Colors.outline} />
       </Pressable>

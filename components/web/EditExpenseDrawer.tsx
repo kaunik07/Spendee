@@ -43,6 +43,9 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
   const expense = expenses.find((e) => e.id === expenseId) ?? null;
 
   const [amount,          setAmount]          = useState('');
+  // false = ordinary spend (stored positive); true = a refund (stored
+  // negative). decimal-pad has no minus key, so sign is a toggle.
+  const [isRefund,        setIsRefund]        = useState(false);
   const [name,            setName]            = useState('');
   const [note,            setNote]            = useState('');
   const [category,        setCategory]        = useState('other');
@@ -58,7 +61,8 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
   // carry over from the previously edited row).
   useEffect(() => {
     if (!expense || !visible) return;
-    setAmount(expense.amount.toString());
+    setAmount(Math.abs(expense.amount).toString());
+    setIsRefund(expense.amount < 0);
     setName(expense.name);
     setNote(expense.note ?? '');
     setCategory(expense.category);
@@ -111,13 +115,22 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
   const handleSave = async () => {
     if (!canSave || !expense || !user?.id) return;
 
-    const newAmount      = parseFloat(amount);
-    const oldAmount      = expense.amount;
+    const newMagnitude   = parseFloat(amount);
+    // expense.amount is signed at rest (negative = refund) — see
+    // AddExpenseSheet.tsx for the same convention. The linked ledger tables
+    // require amount > 0 and carry direction via `type` instead, so a
+    // refund's ledger row stores the positive magnitude with type flipped
+    // to the opposite of a normal spend.
+    const newAmount       = isRefund ? -newMagnitude : newMagnitude;
+    const oldAmount        = expense.amount;
+    const oldIsRefund      = oldAmount < 0;
     const oldPaymentType = expense.paymentType;
     const oldSourceId    = expense.paymentSourceId;
     const oldLinkedTxnId = expense.linkedTransactionId;
     const newPaymentType = paymentType;
     const newSourceId    = paymentSourceId;
+    const newBankTxnType = isRefund ? 'deposit' : 'withdrawal';
+    const newCardTxnType = isRefund ? 'payment' : 'charge';
 
     const txnNote = `${cat.label} - ${name.trim()}`;
 
@@ -126,6 +139,9 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
     const opId = () => Crypto.randomUUID();
 
     if (storageMode === 'online') {
+      // Reversal is sign-agnostic: balanceAccount's delta always undoes
+      // -oldAmount, balanceCard's always undoes +oldAmount, whether oldAmount
+      // was a positive spend or a negative refund.
       if (oldPaymentType === 'bank_account' && oldSourceId) {
         bundle.push({ id: opId(), kind: 'balanceAccount', accountId: oldSourceId, delta: oldAmount });
         if (oldLinkedTxnId) bundle.push({ id: opId(), kind: 'delete', table: 'account_transactions', rowId: oldLinkedTxnId });
@@ -135,26 +151,31 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
       }
       if (newPaymentType === 'bank_account' && newSourceId) {
         newLinkedTxnId = Crypto.randomUUID();
-        bundle.push({ id: opId(), kind: 'insert', table: 'account_transactions', row: { id: newLinkedTxnId, account_id: newSourceId, user_id: user.id, type: 'withdrawal', amount: newAmount, note: txnNote, date, created_at: Date.now() } });
+        bundle.push({ id: opId(), kind: 'insert', table: 'account_transactions', row: { id: newLinkedTxnId, account_id: newSourceId, user_id: user.id, type: newBankTxnType, amount: newMagnitude, note: txnNote, date, created_at: Date.now() } });
         bundle.push({ id: opId(), kind: 'balanceAccount', accountId: newSourceId, delta: -newAmount });
       } else if (newPaymentType === 'credit_card' && newSourceId) {
         newLinkedTxnId = Crypto.randomUUID();
-        bundle.push({ id: opId(), kind: 'insert', table: 'credit_card_transactions', row: { id: newLinkedTxnId, card_id: newSourceId, user_id: user.id, type: 'charge', amount: newAmount, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() } });
+        bundle.push({ id: opId(), kind: 'insert', table: 'credit_card_transactions', row: { id: newLinkedTxnId, card_id: newSourceId, user_id: user.id, type: newCardTxnType, amount: newMagnitude, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() } });
         bundle.push({ id: opId(), kind: 'balanceCard', cardId: newSourceId, delta: newAmount });
       }
     } else {
-      const paymentUnchanged = newPaymentType === oldPaymentType && newSourceId === oldSourceId;
+      // The fast path (patch the existing ledger row in place) only applies
+      // when neither the payment source nor the refund/spend direction
+      // changed — a direction flip needs the ledger row's `type` to flip
+      // too, which a same-row amount patch can't do, so that case falls
+      // through to the full reverse-then-reapply below.
+      const paymentUnchanged = newPaymentType === oldPaymentType && newSourceId === oldSourceId && isRefund === oldIsRefund;
       if (paymentUnchanged && newPaymentType !== null && oldLinkedTxnId) {
         const diff = newAmount - oldAmount;
         if (diff !== 0) {
           if (newPaymentType === 'bank_account' && newSourceId) {
             const acct = accounts.find((a) => a.id === newSourceId);
             if (acct) await updateAccount(acct.id, acct.name, acct.balance - diff);
-            await updateAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+            await updateAccountTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newMagnitude });
           } else if (newPaymentType === 'credit_card' && newSourceId) {
             const card = cards.find((c) => c.id === newSourceId);
             if (card) await updateCard(card.id, card.name, card.outstandingBalance + diff, card.creditLimit);
-            await updateCCTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newAmount });
+            await updateCCTransactionDirect(user.id, storageMode, oldLinkedTxnId, { amount: newMagnitude });
           }
         }
         newLinkedTxnId = oldLinkedTxnId;
@@ -171,13 +192,13 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
         if (newPaymentType === 'bank_account' && newSourceId) {
           const acct = accounts.find((a) => a.id === newSourceId);
           if (acct) {
-            newLinkedTxnId = await addAccountTransactionDirect(user.id, storageMode, { accountId: newSourceId, type: 'withdrawal', amount: newAmount, note: txnNote, date });
+            newLinkedTxnId = await addAccountTransactionDirect(user.id, storageMode, { accountId: newSourceId, type: newBankTxnType, amount: newMagnitude, note: txnNote, date });
             await updateAccount(acct.id, acct.name, acct.balance - newAmount);
           }
         } else if (newPaymentType === 'credit_card' && newSourceId) {
           const card = cards.find((c) => c.id === newSourceId);
           if (card) {
-            newLinkedTxnId = await addCCTransactionDirect(user.id, storageMode, { cardId: newSourceId, type: 'charge', amount: newAmount, note: txnNote, date, bankAccountId: null, linkedBankTransactionId: null });
+            newLinkedTxnId = await addCCTransactionDirect(user.id, storageMode, { cardId: newSourceId, type: newCardTxnType, amount: newMagnitude, note: txnNote, date, bankAccountId: null, linkedBankTransactionId: null });
             await updateCard(card.id, card.name, card.outstandingBalance + newAmount, card.creditLimit);
           }
         }
@@ -208,8 +229,23 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
   return (
     <>
       <WebDrawer visible={visible && !!expense} onClose={onClose} title="Edit Expense">
-        <View style={styles.amountRow}>
-          <Text style={styles.currencySymbol}>$</Text>
+        <View style={styles.signToggle}>
+          <Pressable
+            style={[styles.signBtn, !isRefund && { backgroundColor: Colors.danger + '26', borderColor: Colors.danger }]}
+            onPress={() => setIsRefund(false)}>
+            <MaterialCommunityIcons name="minus-circle-outline" size={14} color={!isRefund ? Colors.danger : Colors.outline} />
+            <Text style={[styles.signBtnText, !isRefund && { color: Colors.danger }]}>Expense</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.signBtn, isRefund && { backgroundColor: Colors.primary + '26', borderColor: Colors.primary }]}
+            onPress={() => setIsRefund(true)}>
+            <MaterialCommunityIcons name="plus-circle-outline" size={14} color={isRefund ? Colors.primary : Colors.outline} />
+            <Text style={[styles.signBtnText, isRefund && { color: Colors.primary }]}>Refund</Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.amountRow, isRefund && { borderColor: Colors.primary + '60' }]}>
+          <Text style={[styles.currencySymbol, isRefund && { color: Colors.primary }]}>{isRefund ? '+$' : '$'}</Text>
           <TextInput
             style={styles.amountInput}
             keyboardType="decimal-pad"
@@ -358,6 +394,13 @@ export default function EditExpenseDrawer({ expenseId, visible, onClose }: Props
 }
 
 const styles = StyleSheet.create({
+  signToggle: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  signBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surfaceContainer,
+  },
+  signBtnText: { color: Colors.outline, fontSize: 12, fontWeight: '700' },
+
   amountRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: Colors.surfaceContainer, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 20,

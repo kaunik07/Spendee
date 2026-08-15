@@ -14,6 +14,7 @@ import WebPanel from '@/components/web/WebPanel';
 import { Colors, getCategoryById } from '@/constants/theme';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { Expense } from '@/store/useExpenses';
+import { formatSignedAmount } from '@/lib/money';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MONTH_ABBR  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -120,7 +121,7 @@ export default function SummaryScreenWeb() {
 
       <WebPanel
         title={pillLabel}
-        linkLabel={total > 0 ? `-$${total.toFixed(2)}` : undefined}>
+        linkLabel={total !== 0 ? formatSignedAmount(total) : undefined}>
         {groups.length === 0 ? (
           <Text style={styles.emptyText}>No expenses in this range.</Text>
         ) : (

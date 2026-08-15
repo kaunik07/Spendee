@@ -210,7 +210,7 @@ export async function updateCCTransactionDirect(
   userId: string,
   storageMode: StorageMode | null,
   txnId: string,
-  updates: Partial<Pick<CreditCardTransaction, 'amount' | 'note' | 'date'>>,
+  updates: Partial<Pick<CreditCardTransaction, 'amount' | 'note' | 'date' | 'type'>>,
 ): Promise<void> {
   if (storageMode === 'local') {
     const all = await localLoadAll(userId);

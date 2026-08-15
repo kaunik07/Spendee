@@ -6,6 +6,7 @@
 import { normalizeMerchant } from './merchant';
 import { inferSubcategory } from './subcategorize';
 import { fingerprintAll } from './fingerprint';
+import { isPaymentDescriptor } from './refund';
 import { categorizeMerchants, isStatementsConfigured } from '@/lib/statementApi';
 import { supabase } from '@/lib/supabase';
 import type { RawTxn } from './types';
@@ -20,7 +21,12 @@ export interface ReviewRow {
   subcategory: string | null;
   details: Record<string, string> | null;
   fingerprint: string;
+  /** A real payment (autopay, bank transfer) — excluded, collapsed. Never true at the same time as isRefund. */
   isCredit: boolean;
+  /** A merchant refund reversing an earlier purchase — included by default, imported as a negative expense. See lib/statement/refund.ts. */
+  isRefund: boolean;
+  /** What actually gets written to Expense.amount: raw.amount, negated when isRefund. */
+  signedAmount: number;
   dup: { type: 'exact' | 'near'; note: string } | null;
   included: boolean;
 }
@@ -127,8 +133,18 @@ export async function buildReviewRows(
   existing: ExistingExpenseLite[],
 ): Promise<ReviewRow[]> {
   const normalized = txns.map((t) => normalizeMerchant(t.description));
+
+  // Credit/refund classification has to happen before fingerprinting — the
+  // fingerprint is keyed on the SIGNED amount (see fingerprint.ts), so a
+  // refund and an ordinary purchase of the same magnitude/day/merchant must
+  // land in different (date, merchantKey, cents) groups, not collide as the
+  // same transaction.
+  const creditFlags = txns.map((t) => t.direction === 'credit' && isPaymentDescriptor(t.description));
+  const refundFlags = txns.map((t, i) => t.direction === 'credit' && !creditFlags[i]);
+  const signedAmounts = txns.map((t, i) => (refundFlags[i] ? -t.amount : t.amount));
+
   const fingerprints = await fingerprintAll(
-    txns.map((t, i) => ({ date: t.date, merchantKey: normalized[i].key, amount: t.amount })),
+    txns.map((t, i) => ({ date: t.date, merchantKey: normalized[i].key, amount: signedAmounts[i] })),
   );
 
   const distinctKeys = [...new Set(normalized.map((n) => n.key))];
@@ -137,9 +153,10 @@ export async function buildReviewRows(
   const existingFingerprints = new Set(
     existing.map((e) => e.importFingerprint).filter((f): f is string => !!f),
   );
-  // date|cents -> existing expense, for the near-duplicate check. Debits
-  // only — expenses never records a credit/payment, so a credit RawTxn has
-  // nothing in this table to match against.
+  // date|cents -> existing expense, for the near-duplicate check. Keyed by
+  // the SIGNED amount, same convention Expense.amount now stores — a
+  // purchase and a refund of the same merchant/magnitude/day are two
+  // different real events and must not collide with each other here.
   const byDateAmount = new Map<string, ExistingExpenseLite>();
   for (const e of existing) byDateAmount.set(`${e.date}|${Math.round(e.amount * 100)}`, e);
 
@@ -147,14 +164,22 @@ export async function buildReviewRows(
     const { key: merchantKey, display } = normalized[i];
     const info = infoByKey[merchantKey] ?? { category: 'other', subcategory: null, details: null, fromOverride: false };
     const { subcategory, details } = resolveSubcategory(info, t.description, display);
-    const isCredit = t.direction === 'credit';
+
+    // A credit-direction row is either a real payment (autopay, bank
+    // transfer — never touched a category, stays excluded) or a merchant
+    // refund (reverses an earlier purchase — belongs in the expense list as
+    // a negative amount so that category's spend stays accurate). See
+    // lib/statement/refund.ts for the distinguishing signal.
+    const isCredit = creditFlags[i];
+    const isRefund = refundFlags[i];
+    const signedAmount = signedAmounts[i];
     const fingerprint = fingerprints[i];
 
     let dup: ReviewRow['dup'] = null;
     if (existingFingerprints.has(fingerprint)) {
       dup = { type: 'exact', note: 'Already imported' };
     } else if (!isCredit) {
-      const match = byDateAmount.get(`${t.date}|${Math.round(t.amount * 100)}`);
+      const match = byDateAmount.get(`${t.date}|${Math.round(signedAmount * 100)}`);
       if (match) dup = { type: 'near', note: `Matches "${match.name}" already in your expenses` };
     }
 
@@ -168,6 +193,8 @@ export async function buildReviewRows(
       details,
       fingerprint,
       isCredit,
+      isRefund,
+      signedAmount,
       dup,
       included: !isCredit && dup?.type !== 'exact',
     };

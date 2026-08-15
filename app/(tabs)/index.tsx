@@ -18,6 +18,7 @@ import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
 import { computeDueReminders, getSettled, settleCardCycle, rescheduleCardReminders } from '@/store/ccReminders';
 import { dueLabel } from '@/lib/billing';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 
 const BANK_BLUE    = '#82B1FF';
 const CARD_COLOR   = '#E8906A';
@@ -224,7 +225,7 @@ export default function HomeScreen() {
               <MaterialCommunityIcons name="calendar-today" size={19} color={Colors.danger} />
             </View>
             <Text style={styles.gridLabel}>Today</Text>
-            <Text style={[styles.gridAmount, { color: Colors.danger }]}>-${todayTotal.toFixed(2)}</Text>
+            <Text style={[styles.gridAmount, { color: signedAmountColor(todayTotal) }]}>{formatSignedAmount(todayTotal)}</Text>
             <Text style={styles.gridSub}>
               {todayExpenses.length} expense{todayExpenses.length !== 1 ? 's' : ''}
             </Text>

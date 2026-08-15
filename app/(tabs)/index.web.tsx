@@ -15,6 +15,7 @@ import { useBudgetsContext } from '@/store/BudgetsContext';
 import { computeDueReminders, getSettled, rescheduleCardReminders, settleCardCycle } from '@/store/ccReminders';
 import { useCreditCardsContext } from '@/store/CreditCardsContext';
 import { useExpenseContext } from '@/store/ExpenseContext';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 
 const WARN_COLOR = '#FFB74D';
 
@@ -136,8 +137,8 @@ export default function HomeScreenWeb() {
         />
         <WebStatCard
           label="Today's Spend"
-          value={`-$${todayTotal.toFixed(2)}`}
-          valueColor={Colors.danger}
+          value={formatSignedAmount(todayTotal)}
+          valueColor={signedAmountColor(todayTotal)}
           note={`${todayExpenses.length} expense${todayExpenses.length !== 1 ? 's' : ''}`}
           onPress={() => router.push('/expenses')}
         />
@@ -166,7 +167,7 @@ export default function HomeScreenWeb() {
                     <Text style={styles.expenseName} numberOfLines={1}>{e.name}</Text>
                     <Text style={styles.expenseCat}>{cat.label}</Text>
                   </View>
-                  <Text style={styles.expenseAmt}>-${e.amount.toFixed(2)}</Text>
+                  <Text style={[styles.expenseAmt, { color: signedAmountColor(e.amount) }]}>{formatSignedAmount(e.amount)}</Text>
                 </View>
               );
             })

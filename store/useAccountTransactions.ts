@@ -197,7 +197,7 @@ export async function updateAccountTransactionDirect(
   userId: string,
   storageMode: StorageMode | null,
   txnId: string,
-  updates: Partial<Pick<AccountTransaction, 'amount' | 'note' | 'date'>>,
+  updates: Partial<Pick<AccountTransaction, 'amount' | 'note' | 'date' | 'type'>>,
 ): Promise<void> {
   if (storageMode === 'local') {
     const all = await localLoadAll(userId);

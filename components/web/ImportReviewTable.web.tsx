@@ -6,15 +6,22 @@
 // Three regions, matching the approved mockup:
 //   - normal rows (included by default, near-duplicates flagged but still
 //     included — a re-download of an overlapping period is the common case,
-//     and a genuine same-day repeat purchase is common too)
+//     and a genuine same-day repeat purchase is common too; a merchant
+//     refund lives here too, shown with a "Refund" chip and a negative
+//     amount — it touched a category and belongs in the total, unlike a
+//     payment)
 //   - exact duplicates — collapsed, unchecked, never counted
-//   - payments & credits — collapsed, unchecked, excluded from the total
+//   - payments & credits — collapsed, unchecked, excluded from the total.
+//     Only a genuine payment mechanism (autopay, bank transfer — see
+//     lib/statement/refund.ts) lands here; a merchant refund is a normal
+//     row, not a credit.
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Colors, getCategoryById } from '@/constants/theme';
 import { getSubcategoryById } from '@/constants/subcategories';
 import type { ReviewRow } from '@/lib/statement/reviewRows';
+import { formatSignedAmount, signedAmountColor } from '@/lib/money';
 import CategoryPopover from './CategoryPopover.web';
 
 interface Props {
@@ -90,13 +97,14 @@ function Row({ row, onToggle, onOpenCategory, onRename }: {
           />
           {row.dup?.type === 'exact' && <Text style={[styles.chip, styles.chipDup]}>Duplicate</Text>}
           {row.dup?.type === 'near' && <Text style={[styles.chip, styles.chipDup]}>Possible duplicate</Text>}
-          {row.isCredit && <Text style={[styles.chip, styles.chipCredit]}>{row.raw.amount > 0 ? 'Credit' : 'Credit'}</Text>}
+          {row.isCredit && <Text style={[styles.chip, styles.chipCredit]}>Credit</Text>}
+          {row.isRefund && <Text style={[styles.chip, styles.chipRefund]}>Refund</Text>}
         </View>
         <Text style={styles.rawText} numberOfLines={1}>{row.raw.description}</Text>
         {row.dup?.note && <Text style={styles.dupNote}>{row.dup.note}</Text>}
       </View>
-      <Text style={[styles.amountCell, row.isCredit && styles.amountCredit]}>
-        {row.isCredit ? '–' : ''}{money(row.raw.amount)}
+      <Text style={[styles.amountCell, row.isCredit && styles.amountCredit, row.isRefund && { color: signedAmountColor(row.signedAmount) }]}>
+        {row.isCredit ? `–${money(row.raw.amount)}` : formatSignedAmount(row.signedAmount)}
       </Text>
       <CategoryCell row={row} onOpen={onOpenCategory} />
     </View>
@@ -124,7 +132,9 @@ export default function ImportReviewTable({
   const creditRows = useMemo(() => rows.filter((r) => r.isCredit), [rows]);
 
   const included = rows.filter((r) => r.included);
-  const total = included.reduce((s, r) => s + r.raw.amount, 0);
+  // Signed — a refund subtracts from the total rather than adding to it,
+  // same as it will once written as a negative Expense.amount.
+  const total = included.reduce((s, r) => s + r.signedAmount, 0);
   const creditsTotal = creditRows.reduce((s, r) => s + r.raw.amount, 0);
   const allSelected = normalRows.length > 0 && normalRows.every((r) => r.included);
 
@@ -159,8 +169,8 @@ export default function ImportReviewTable({
         </View>
         <View style={styles.stat}>
           <Text style={styles.statLabel}>Total to import</Text>
-          <Text style={styles.statValue}>{money(total)}</Text>
-          <Text style={styles.statSub}>debits only</Text>
+          <Text style={[styles.statValue, { color: signedAmountColor(total) }]}>{formatSignedAmount(total)}</Text>
+          <Text style={styles.statSub}>debits and refunds, net</Text>
         </View>
         <View style={styles.stat}>
           <Text style={styles.statLabel}>Skipped</Text>
@@ -233,7 +243,7 @@ export default function ImportReviewTable({
         </ScrollView>
       </View>
 
-      <Text style={styles.footNote}>Only debits import as expenses. Credits and payments are shown but excluded by default.</Text>
+      <Text style={styles.footNote}>Debits and merchant refunds import as expenses. Payments (autopay, bank transfers) are shown but excluded by default.</Text>
 
       <View style={styles.footerPad} />
 
@@ -262,8 +272,8 @@ export default function ImportReviewTable({
 
       <View style={styles.footer}>
         <View style={styles.footerSummary}>
-          <Text style={styles.footerHeadline}>Import {included.length} expense{included.length === 1 ? '' : 's'} · <Text style={styles.footerAmt}>{money(total)}</Text></Text>
-          <Text style={styles.footerSub}>{sourceName} — outstanding balance increases by this amount</Text>
+          <Text style={styles.footerHeadline}>Import {included.length} expense{included.length === 1 ? '' : 's'} · <Text style={[styles.footerAmt, { color: signedAmountColor(total) }]}>{formatSignedAmount(total)}</Text></Text>
+          <Text style={styles.footerSub}>{sourceName} — outstanding balance changes by this amount</Text>
         </View>
         <View style={styles.footerSpacer} />
         <Pressable style={styles.btnCancel} onPress={onCancel} disabled={committing}>
@@ -358,6 +368,7 @@ const styles = StyleSheet.create({
   chip: { fontSize: 9.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 5, overflow: 'hidden' },
   chipDup: { backgroundColor: '#FFD9661A', color: '#FFD966' },
   chipCredit: { backgroundColor: Colors.surfaceContainerHigh, color: Colors.textMuted },
+  chipRefund: { backgroundColor: Colors.primary + '1A', color: Colors.primary },
 
   sectionRow: { paddingVertical: 9, paddingHorizontal: 14, backgroundColor: Colors.surface },
   sectionText: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },

@@ -69,6 +69,10 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   const keyboardHeight              = useKeyboardHeight();
 
   const [amount,          setAmount]          = useState('');
+  // false = ordinary spend (stored positive); true = a refund logged directly
+  // (stored negative). Kept separate from the typed digits — decimal-pad has
+  // no minus key on mobile, so sign is a toggle, not something typed.
+  const [isRefund,        setIsRefund]        = useState(false);
   const [name,            setName]            = useState('');
   const [note,            setNote]            = useState('');
   const [category,        setCategory]        = useState('food');
@@ -147,6 +151,13 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
   const handleSave = async () => {
     if (!canSave || !user?.id) return;
     const parsedAmount = parseFloat(amount);
+    // The linked ledger tables (account_transactions, credit_card_transactions)
+    // require amount > 0 and carry direction via `type`, not sign — so a
+    // refund flips type to the opposite of a normal spend (withdrawal->deposit,
+    // charge->payment) and stores the same positive magnitude. The expense
+    // row itself is the one place the sign is real: negative for a refund,
+    // so it nets correctly against category/budget totals.
+    const expenseAmount = isRefund ? -parsedAmount : parsedAmount;
     let linkedTransactionId: string | null = null;
     const bundle: SyncOp[] = [];
 
@@ -156,40 +167,44 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
     // as a bundle queued atomically with the expense — offline-safe. Local
     // (guest) mode writes directly to on-device storage as before.
     if (paymentType === 'bank_account' && paymentSourceId) {
+      const txnType = isRefund ? 'deposit' : 'withdrawal';
+      const delta = isRefund ? parsedAmount : -parsedAmount;
       if (storageMode === 'online') {
         const txnId = Crypto.randomUUID();
         linkedTransactionId = txnId;
         bundle.push({
           id: Crypto.randomUUID(), kind: 'insert', table: 'account_transactions',
-          row: { id: txnId, account_id: paymentSourceId, user_id: user.id, type: 'withdrawal', amount: parsedAmount, note: txnNote, date, created_at: Date.now() },
+          row: { id: txnId, account_id: paymentSourceId, user_id: user.id, type: txnType, amount: parsedAmount, note: txnNote, date, created_at: Date.now() },
         });
-        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceAccount', accountId: paymentSourceId, delta: -parsedAmount });
+        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceAccount', accountId: paymentSourceId, delta });
       } else {
         const account = accounts.find((a) => a.id === paymentSourceId);
         if (account) {
           linkedTransactionId = await addAccountTransactionDirect(user.id, storageMode, {
-            accountId: paymentSourceId, type: 'withdrawal', amount: parsedAmount, note: txnNote, date,
+            accountId: paymentSourceId, type: txnType, amount: parsedAmount, note: txnNote, date,
           });
-          await updateAccount(paymentSourceId, account.name, account.balance - parsedAmount);
+          await updateAccount(paymentSourceId, account.name, account.balance + delta);
         }
       }
     } else if (paymentType === 'credit_card' && paymentSourceId) {
+      const txnType = isRefund ? 'payment' : 'charge';
+      const delta = isRefund ? -parsedAmount : parsedAmount;
       if (storageMode === 'online') {
         const txnId = Crypto.randomUUID();
         linkedTransactionId = txnId;
         bundle.push({
           id: Crypto.randomUUID(), kind: 'insert', table: 'credit_card_transactions',
-          row: { id: txnId, card_id: paymentSourceId, user_id: user.id, type: 'charge', amount: parsedAmount, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() },
+          row: { id: txnId, card_id: paymentSourceId, user_id: user.id, type: txnType, amount: parsedAmount, note: txnNote, date, bank_account_id: null, linked_bank_transaction_id: null, created_at: Date.now() },
         });
-        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceCard', cardId: paymentSourceId, delta: parsedAmount });
+        bundle.push({ id: Crypto.randomUUID(), kind: 'balanceCard', cardId: paymentSourceId, delta });
       } else {
         const card = cards.find((c) => c.id === paymentSourceId);
         if (card) {
           linkedTransactionId = await addCCTransactionDirect(user.id, storageMode, {
-            cardId: paymentSourceId, type: 'charge', amount: parsedAmount, note: txnNote, date,
+            cardId: paymentSourceId, type: txnType, amount: parsedAmount, note: txnNote, date,
             bankAccountId: null, linkedBankTransactionId: null,
           });
-          await updateCard(paymentSourceId, card.name, card.outstandingBalance + parsedAmount, card.creditLimit);
+          await updateCard(paymentSourceId, card.name, card.outstandingBalance + delta, card.creditLimit);
           bumpCCTxnVersion();
         }
       }
@@ -202,7 +217,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
 
     await addExpense({
       name:                name.trim(),
-      amount:              parsedAmount,
+      amount:              expenseAmount,
       category,
       subcategory,
       details:             Object.keys(cleanedDetails).length > 0 ? cleanedDetails : null,
@@ -214,6 +229,7 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
     }, bundle);
 
     setAmount('');
+    setIsRefund(false);
     setName('');
     setNote('');
     setCategory('food');
@@ -233,9 +249,28 @@ export default function AddExpenseSheet({ sheetRef }: Props) {
           no header chrome of its own. */}
       {Platform.OS !== 'web' && <Text style={styles.sheetTitle}>Add Expense</Text>}
 
+          {/* Expense / Refund toggle — decimal-pad has no minus key, so sign
+              is a choice, not something typed into the amount field. */}
+          <View style={styles.signToggle}>
+            <TouchableOpacity
+              style={[styles.signBtn, !isRefund && { backgroundColor: C.danger + '26', borderColor: C.danger }]}
+              onPress={() => setIsRefund(false)}
+              activeOpacity={0.8}>
+              <MaterialCommunityIcons name="minus-circle-outline" size={15} color={!isRefund ? C.danger : C.outline} />
+              <Text style={[styles.signBtnText, !isRefund && { color: C.danger }]}>Expense</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.signBtn, isRefund && { backgroundColor: C.primary + '26', borderColor: C.primary }]}
+              onPress={() => setIsRefund(true)}
+              activeOpacity={0.8}>
+              <MaterialCommunityIcons name="plus-circle-outline" size={15} color={isRefund ? C.primary : C.outline} />
+              <Text style={[styles.signBtnText, isRefund && { color: C.primary }]}>Refund</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Amount */}
-          <View style={styles.amountRow}>
-            <Text style={styles.currencySymbol}>$</Text>
+          <View style={[styles.amountRow, isRefund && { borderColor: C.primary + '60' }]}>
+            <Text style={[styles.currencySymbol, isRefund && { color: C.primary }]}>{isRefund ? '+$' : '$'}</Text>
             <TextInput
               style={styles.amountInput}
               placeholder="0.00"
@@ -481,6 +516,25 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     letterSpacing: 0.2,
   },
+
+  signToggle: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  signBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+  },
+  signBtnText: { color: C.outline, fontSize: 12.5, fontWeight: '700' },
 
   amountRow: {
     flexDirection: 'row',
