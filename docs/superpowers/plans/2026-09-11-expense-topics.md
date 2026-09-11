@@ -1508,7 +1508,10 @@ export default function TopicCard({ topic, total, expenseCount }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 16, padding: 18 },
+  // minWidth/flexBasis/flexGrow, not a fixed width: topics.web.tsx's grid
+  // uses flexWrap (react-native-web has no `display: grid`), so each card
+  // needs to size itself for that to wrap into columns.
+  card: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 16, padding: 18, minWidth: 260, flexBasis: '31%', flexGrow: 1 },
   cardArchived: { opacity: 0.6 },
   top: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 },
   icon: { width: 38, height: 38, borderRadius: 11, backgroundColor: Colors.surfaceContainerHigh, alignItems: 'center', justifyContent: 'center' },
@@ -1631,16 +1634,6 @@ const styles = StyleSheet.create({
   sectionLabel: { color: Colors.outline, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.06, marginTop: 8, marginBottom: 12 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
 });
-```
-
-Note: `grid` uses `flexWrap` rather than CSS grid (react-native-web has no
-`display: grid` support) — each `TopicCard` needs an explicit `width` for
-this to wrap into columns. Add `minWidth: 260, flexBasis: '31%', flexGrow: 1`
-to `TopicCard.web.tsx`'s `card` style (revisit Step 1 of this task and patch
-before Step 3):
-
-```ts
-  card: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 16, padding: 18, minWidth: 260, flexBasis: '31%', flexGrow: 1 },
 ```
 
 - [ ] **Step 3: Add the Topics nav item to `components/web/WebSidebar.tsx`**
