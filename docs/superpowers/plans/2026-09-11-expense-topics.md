@@ -2335,7 +2335,6 @@ there is no new change to commit for this task — it closes as a verification
 pass with no diff. If Step 1 finds either file missing, malformed, or with a
 naming collision, fix it now and commit that fix with a message explaining
 what Task 10's verification caught.
-```
 
 ---
 
