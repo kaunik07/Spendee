@@ -12,6 +12,7 @@ import { CreditCardsProvider } from '@/store/CreditCardsContext';
 import { AuthProvider, useAuthContext } from '@/store/AuthContext';
 import { BudgetsProvider } from '@/store/BudgetsContext';
 import { TopicsProvider } from '@/store/TopicsContext';
+import { TopicExpensesProvider } from '@/store/TopicExpensesContext';
 import { ExpenseProvider } from '@/store/ExpenseContext';
 import { SavingsProvider } from '@/store/SavingsContext';
 import WebLayout from '@/components/web/WebLayout';
@@ -143,6 +144,7 @@ export default function RootLayout() {
             <CreditCardsProvider>
             <BudgetsProvider>
             <TopicsProvider>
+            <TopicExpensesProvider>
               <AuthGuard>
                 {/* Native screens navigate with a slide-from-right transition; on
                     web that plays as a visible sliding animation (React Navigation's
@@ -165,6 +167,7 @@ export default function RootLayout() {
                 </Stack>
                 <StatusBar style="light" />
               </AuthGuard>
+            </TopicExpensesProvider>
             </TopicsProvider>
             </BudgetsProvider>
             </CreditCardsProvider>
