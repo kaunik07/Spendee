@@ -5,7 +5,6 @@
 // browser/OS's own emoji picker (Cmd+Ctrl+Space on macOS, Win+. on Windows,
 // the native keyboard's emoji tab on mobile web) already gives full-unicode
 // search for free, so no new dependency or component is needed.
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import WebDatePickerModal from '@/components/WebDatePickerModal';
