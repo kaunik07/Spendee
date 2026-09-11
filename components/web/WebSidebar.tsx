@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/budget',   label: 'Budget',   icon: 'target',          match: (p) => p.startsWith('/budget') },
   { href: '/savings',  label: 'Savings',  icon: 'piggy-bank',      match: (p) => p.startsWith('/savings') },
   { href: '/summary',  label: 'Summary',  icon: 'chart-box',       match: (p) => p.startsWith('/summary') },
+  { href: '/topics',   label: 'Topics',   icon: 'folder-multiple-outline', match: (p) => p.startsWith('/topics') },
   { href: '/import-statement', label: 'Import', icon: 'file-upload-outline', match: (p) => p.startsWith('/import-statement') },
 ];
 
