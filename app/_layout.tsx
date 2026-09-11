@@ -165,6 +165,7 @@ export default function RootLayout() {
                   <Stack.Screen name="edit-cc-txn/[id]"   options={{ headerShown: false }} />
                   <Stack.Screen name="import-statement"   options={{ headerShown: false }} />
                   <Stack.Screen name="topics"              options={{ headerShown: false }} />
+                  <Stack.Screen name="topics/[id]"         options={{ headerShown: false }} />
                 </Stack>
                 <StatusBar style="light" />
               </AuthGuard>
