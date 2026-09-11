@@ -21,7 +21,7 @@ export default function TopicDetailScreenWeb() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  const { topics, updateTopic } = useTopicsContext();
+  const { topics, updateTopic, deleteTopic } = useTopicsContext();
   const { memberships, removeExpenseFromTopic } = useTopicExpensesContext();
   const { expenses } = useExpenseContext();
 
@@ -59,6 +59,11 @@ export default function TopicDetailScreenWeb() {
 
   const handleArchiveToggle = () => updateTopic(topic.id, { archived: !topic.archived });
 
+  const handleDelete = () => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete "${topic.name}"? This removes the topic and un-tags its ${topicExpenses.length} expense${topicExpenses.length !== 1 ? 's' : ''} — the expenses themselves are not deleted. This cannot be undone.`)) return;
+    (async () => { await deleteTopic(topic.id); router.push('/topics'); })();
+  };
+
   const donutData = breakdown.map((b) => ({ id: b.catId, color: getCategoryById(b.catId).color, value: Math.abs(b.amount) }));
   const donutTotal = breakdown.reduce((s, b) => s + Math.abs(b.amount), 0);
 
@@ -77,17 +82,23 @@ export default function TopicDetailScreenWeb() {
           </View>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.btnGhost} onPress={() => setEditDrawerOpen(true)}>
-            <Text style={styles.btnGhostText}>Edit</Text>
+          <Pressable style={styles.iconBtn} onPress={() => setEditDrawerOpen(true)} hitSlop={8}>
+            <MaterialCommunityIcons name="pencil-outline" size={17} color={Colors.textSecondary} />
           </Pressable>
-          <Pressable style={styles.btnGhost} onPress={handleArchiveToggle}>
-            <Text style={styles.btnGhostText}>{topic.archived ? 'Unarchive' : 'Archive'}</Text>
+          <Pressable style={styles.iconBtn} onPress={handleArchiveToggle} hitSlop={8}>
+            <MaterialCommunityIcons name={topic.archived ? 'archive-arrow-up-outline' : 'archive-outline'} size={17} color={Colors.textSecondary} />
           </Pressable>
-          <Pressable style={styles.btnPrimary} onPress={() => setAddModalOpen(true)}>
-            <MaterialCommunityIcons name="plus" size={15} color={Colors.onPrimary} />
-            <Text style={styles.btnPrimaryText}>Add Expenses</Text>
+          <Pressable style={styles.iconBtn} onPress={handleDelete} hitSlop={8}>
+            <MaterialCommunityIcons name="trash-can-outline" size={17} color={Colors.danger} />
           </Pressable>
         </View>
+      </View>
+
+      <View style={styles.addExpensesRow}>
+        <Pressable style={styles.btnPrimary} onPress={() => setAddModalOpen(true)}>
+          <MaterialCommunityIcons name="plus" size={15} color={Colors.onPrimary} />
+          <Text style={styles.btnPrimaryText}>Add Expenses</Text>
+        </Pressable>
       </View>
 
       <View style={styles.summaryRow}>
@@ -194,15 +205,16 @@ const styles = StyleSheet.create({
   crumb: { color: Colors.outline, fontSize: 12, marginBottom: 14 },
   crumbBold: { color: Colors.textSecondary, fontWeight: '600' },
 
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 22 },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 },
   headerLeft: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   headerIcon: { width: 52, height: 52, borderRadius: 15, backgroundColor: Colors.surfaceContainerHigh, alignItems: 'center', justifyContent: 'center' },
   headerIconText: { fontSize: 24 },
   headerName: { color: Colors.text, fontSize: 22, fontWeight: '800' },
   headerMeta: { color: Colors.textSecondary, fontSize: 12.5, marginTop: 4 },
-  headerActions: { flexDirection: 'row', gap: 8 },
-  btnGhost: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 9 },
-  btnGhostText: { color: Colors.textSecondary, fontSize: 12.5, fontWeight: '700' },
+  headerActions: { flexDirection: 'row', gap: 4 },
+  iconBtn: { padding: 8, borderRadius: 9 },
+
+  addExpensesRow: { alignItems: 'flex-start', marginBottom: 22 },
   btnPrimary: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.primary, borderRadius: 11, paddingHorizontal: 15, paddingVertical: 9 },
   btnPrimaryText: { color: Colors.onPrimary, fontSize: 12.5, fontWeight: '800' },
 
