@@ -70,6 +70,7 @@ export default function ExpensesScreenWeb() {
   const toggleSelectMode = () => {
     setSelectMode((v) => !v);
     setSelectedIds(new Set());
+    setTopicPickerOpen(false);
   };
 
   const toggleSelected = (id: string) => {
@@ -282,7 +283,12 @@ export default function ExpensesScreenWeb() {
         )}
       </WebPanel>
 
-      {topicPickerOpen && (
+      {/* Modal-wrapped, matching the date-range popover above — a bare
+          absolutely-positioned Pressable has no sized ancestor to fill, so
+          its flex:1 backdrop collapses to ~0px and click-outside-to-dismiss
+          silently does nothing (caught in Task 11's review, confirmed
+          against this file's own working datePopover precedent). */}
+      <Modal transparent visible={topicPickerOpen} animationType="fade" onRequestClose={() => setTopicPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setTopicPickerOpen(false)}>
           <Pressable style={styles.topicPopover} onPress={() => {}}>
             {topics.filter((t) => !t.archived).map((t) => (
@@ -299,7 +305,7 @@ export default function ExpensesScreenWeb() {
             </Pressable>
           </Pressable>
         </Pressable>
-      )}
+      </Modal>
 
       <NewTopicDrawer
         visible={newTopicDrawerOpen}
