@@ -18,6 +18,9 @@ import { useExpenseContext } from '@/store/ExpenseContext';
 import { useExpenseActions } from '@/store/useExpenseActions';
 import { Expense } from '@/store/useExpenses';
 import { formatSignedAmount, signedAmountColor } from '@/lib/money';
+import NewTopicDrawer from '@/components/web/NewTopicDrawer.web';
+import { useTopicExpensesContext } from '@/store/TopicExpensesContext';
+import { useTopicsContext } from '@/store/TopicsContext';
 
 const PENDING_AMBER = '#FFB74D';
 
@@ -54,6 +57,39 @@ export default function ExpensesScreenWeb() {
   // Editing happens in the right-side drawer (same chrome as Add Expense)
   // rather than navigating to a separate page.
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const { topics } = useTopicsContext();
+  const { addExpensesToTopic } = useTopicExpensesContext();
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [topicPickerOpen, setTopicPickerOpen] = useState(false);
+  const [newTopicDrawerOpen, setNewTopicDrawerOpen] = useState(false);
+  const [addedFlash, setAddedFlash] = useState<string | null>(null);
+
+  const toggleSelectMode = () => {
+    setSelectMode((v) => !v);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAddToExistingTopic = async (topicId: string, topicName: string) => {
+    await addExpensesToTopic(topicId, [...selectedIds]);
+    setTopicPickerOpen(false);
+    setAddedFlash(`Added to ${topicName}`);
+    setTimeout(() => {
+      setAddedFlash(null);
+      setSelectMode(false);
+      setSelectedIds(new Set());
+    }, 1500);
+  };
 
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
@@ -139,10 +175,15 @@ export default function ExpensesScreenWeb() {
           <Text style={styles.title}>Expenses</Text>
           <Text style={styles.sub}>{monthName} · ${monthTotal.toFixed(2)} total</Text>
         </View>
-        <Pressable style={styles.addBtn} onPress={() => sheetRef.current?.expand()}>
-          <MaterialCommunityIcons name="plus" size={16} color={Colors.onPrimary} />
-          <Text style={styles.addBtnText}>Add Expense</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Pressable style={styles.selectBtn} onPress={toggleSelectMode}>
+            <Text style={styles.selectBtnText}>{selectMode ? 'Done' : 'Select'}</Text>
+          </Pressable>
+          <Pressable style={styles.addBtn} onPress={() => sheetRef.current?.expand()}>
+            <MaterialCommunityIcons name="plus" size={16} color={Colors.onPrimary} />
+            <Text style={styles.addBtnText}>Add Expense</Text>
+          </Pressable>
+        </View>
       </View>
 
       {pendingCount > 0 && (
@@ -152,6 +193,26 @@ export default function ExpensesScreenWeb() {
         </View>
       )}
 
+      {selectMode ? (
+        <View style={styles.bulkBar}>
+          {addedFlash ? (
+            <Text style={styles.bulkFlashText}>{addedFlash}</Text>
+          ) : (
+            <>
+              <Text style={styles.bulkCount}>{selectedIds.size} selected</Text>
+              <Pressable
+                style={[styles.bulkAddBtn, selectedIds.size === 0 && styles.bulkAddBtnDisabled]}
+                onPress={() => setTopicPickerOpen(true)}
+                disabled={selectedIds.size === 0}>
+                <Text style={styles.bulkAddBtnText}>Add to topic ▾</Text>
+              </Pressable>
+              <Pressable style={styles.bulkCancelBtn} onPress={toggleSelectMode}>
+                <Text style={styles.bulkCancelBtnText}>Cancel</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      ) : (
       <View style={styles.filterRow}>
         <Pressable ref={datePillRef} style={styles.filterChip} onPress={openDatePopover}>
           <MaterialCommunityIcons name="calendar-range" size={14} color={dateRangeMode !== 'all' ? Colors.primary : Colors.textSecondary} />
@@ -179,6 +240,7 @@ export default function ExpensesScreenWeb() {
           </Pressable>
         )}
       </View>
+      )}
 
       <WebPanel
         title="Transactions"
@@ -209,6 +271,9 @@ export default function ExpensesScreenWeb() {
                     highlight={isToday}
                     onDelete={() => deleteExpenseWithReversal(item)}
                     onOpen={() => setEditingId(item.id)}
+                    selectMode={selectMode}
+                    selected={selectedIds.has(item.id)}
+                    onToggleSelect={() => toggleSelected(item.id)}
                   />
                 ))}
               </View>
@@ -216,6 +281,32 @@ export default function ExpensesScreenWeb() {
           })
         )}
       </WebPanel>
+
+      {topicPickerOpen && (
+        <Pressable style={styles.backdrop} onPress={() => setTopicPickerOpen(false)}>
+          <Pressable style={styles.topicPopover} onPress={() => {}}>
+            {topics.filter((t) => !t.archived).map((t) => (
+              <Pressable key={t.id} style={styles.topicPopoverItem} onPress={() => handleAddToExistingTopic(t.id, t.name)}>
+                <Text style={styles.topicPopoverIcon}>{t.icon}</Text>
+                <Text style={styles.topicPopoverName} numberOfLines={1}>{t.name}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              style={[styles.topicPopoverItem, styles.topicPopoverNewItem]}
+              onPress={() => { setTopicPickerOpen(false); setNewTopicDrawerOpen(true); }}>
+              <MaterialCommunityIcons name="plus" size={15} color={Colors.primary} />
+              <Text style={[styles.topicPopoverName, { color: Colors.primary }]}>New Topic</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      )}
+
+      <NewTopicDrawer
+        visible={newTopicDrawerOpen}
+        onClose={() => setNewTopicDrawerOpen(false)}
+        preselectedExpenseIds={[...selectedIds]}
+        onCreated={() => { setNewTopicDrawerOpen(false); setSelectMode(false); setSelectedIds(new Set()); }}
+      />
 
       <AddExpenseSheet sheetRef={sheetRef} />
       <EditExpenseDrawer
@@ -326,13 +417,21 @@ export default function ExpensesScreenWeb() {
   );
 }
 
-function ExpenseRow({ item, highlight, onDelete, onOpen }: { item: Expense; highlight: boolean; onDelete: () => void; onOpen: () => void }) {
+function ExpenseRow({ item, highlight, onDelete, onOpen, selectMode, selected, onToggleSelect }: {
+  item: Expense; highlight: boolean; onDelete: () => void; onOpen: () => void;
+  selectMode?: boolean; selected?: boolean; onToggleSelect?: () => void;
+}) {
   const cat = getCategoryById(item.category);
   const sub = getSubcategoryById(item.category, item.subcategory);
   const displayLabel = sub ? `${cat.label} · ${sub.label}` : cat.label;
 
   return (
-    <Pressable style={[styles.row, highlight && styles.rowToday]} onPress={onOpen}>
+    <Pressable style={[styles.row, highlight && styles.rowToday]} onPress={selectMode ? onToggleSelect : onOpen}>
+      {selectMode && (
+        <View style={[styles.rowCheckbox, selected && styles.rowCheckboxOn]}>
+          {selected && <MaterialCommunityIcons name="check" size={11} color={Colors.onPrimary} />}
+        </View>
+      )}
       <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <View style={[styles.icon, { backgroundColor: cat.color + '22' }]}>
           <MaterialCommunityIcons name={cat.icon as any} size={16} color={cat.color} />
@@ -346,9 +445,11 @@ function ExpenseRow({ item, highlight, onDelete, onOpen }: { item: Expense; high
       </View>
       <Text style={[styles.rowText, { flex: 1.4, color: cat.color }]} numberOfLines={1}>{displayLabel}</Text>
       <Text style={[styles.rowAmt, { flex: 1, color: signedAmountColor(item.amount) }]}>{formatSignedAmount(item.amount)}</Text>
-      <Pressable onPress={(e) => { e.stopPropagation?.(); onDelete(); }} hitSlop={8} style={{ width: 32, alignItems: 'flex-end' }}>
-        <MaterialCommunityIcons name="trash-can-outline" size={16} color={Colors.outline} />
-      </Pressable>
+      {!selectMode && (
+        <Pressable onPress={(e) => { e.stopPropagation?.(); onDelete(); }} hitSlop={8} style={{ width: 32, alignItems: 'flex-end' }}>
+          <MaterialCommunityIcons name="trash-can-outline" size={16} color={Colors.outline} />
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -359,6 +460,31 @@ const styles = StyleSheet.create({
   sub: { color: Colors.outline, fontSize: 13, marginTop: 2 },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 },
   addBtnText: { color: Colors.onPrimary, fontWeight: '700', fontSize: 13.5 },
+
+  selectBtn: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  selectBtnText: { color: Colors.textSecondary, fontWeight: '700', fontSize: 13 },
+
+  bulkBar: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16 },
+  bulkCount: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  bulkAddBtn: { backgroundColor: Colors.primary, borderRadius: 9, paddingHorizontal: 12, paddingVertical: 7 },
+  bulkAddBtnDisabled: { opacity: 0.4 },
+  bulkAddBtnText: { color: Colors.onPrimary, fontSize: 12, fontWeight: '700' },
+  bulkCancelBtn: { paddingHorizontal: 8, paddingVertical: 7 },
+  bulkCancelBtnText: { color: Colors.outline, fontSize: 12, fontWeight: '600' },
+  bulkFlashText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+
+  rowCheckbox: { width: 17, height: 17, borderRadius: 5, borderWidth: 1.5, borderColor: Colors.outline, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  rowCheckboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+
+  topicPopover: {
+    position: 'absolute', top: 60, left: 0, width: 240,
+    backgroundColor: Colors.surfaceContainerHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: 14,
+    paddingVertical: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.35, shadowRadius: 30, elevation: 10,
+  },
+  topicPopoverItem: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, paddingVertical: 10 },
+  topicPopoverIcon: { fontSize: 15 },
+  topicPopoverName: { color: Colors.text, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  topicPopoverNewItem: { borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 4, paddingTop: 10 },
 
   syncBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: PENDING_AMBER + '18', borderWidth: 1, borderColor: PENDING_AMBER + '40', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 16 },
   syncText: { color: PENDING_AMBER, fontSize: 12.5, fontWeight: '600' },
