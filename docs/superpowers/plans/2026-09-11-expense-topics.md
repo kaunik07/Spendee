@@ -2202,12 +2202,39 @@ Add directly after it:
                   <Stack.Screen name="topics/[id]"         options={{ headerShown: false }} />
 ```
 
-- [ ] **Step 4: Typecheck**
+- [ ] **Step 4: Create the native stub `app/topics/[id].tsx` NOW, before typechecking or testing**
+
+**This step is not optional and must not be deferred to Task 10.** Task 8
+discovered — the hard way, via a live Playwright run against a real dev
+server — that Expo Router's route flattener throws
+`"does not have a fallback sibling file without a platform extension"` the
+moment ANY `.web.tsx`-only file exists with no non-platform counterpart, and
+that throw happens inside `<ContextNavigator>`, which breaks **every route
+in the entire app**, not just the one missing its stub. `app/topics.tsx`
+already exists (added as an emergency fix during Task 8's review) but
+`app/topics/[id].web.tsx` — which this task just created in Step 2 — has no
+`app/topics/[id].tsx` fallback yet, so the app is broken again right now,
+before you even reach Step 5's manual verification. Fix it immediately:
+
+```bash
+cp app/topics.tsx "app/topics/[id].tsx"
+```
+
+Then edit `app/topics/[id].tsx`'s exported function name only, to avoid two
+identically-named default exports confusing anyone grepping the codebase —
+change `export default function TopicsScreen()` to
+`export default function TopicDetailScreen()`.
+
+(Task 10 still exists in this plan to formally own/re-verify these native
+stubs and confirm the native app itself isn't broken — but the web app
+cannot be manually tested at all until this file exists, so it can't wait.)
+
+- [ ] **Step 5: Typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 5: Manual verification**
+- [ ] **Step 6: Manual verification**
 
 Run `npm run web`, sign in, go to Topics, click into the "Test Trip" topic
 created in Task 8's verification. Expected: detail page loads, breadcrumb
@@ -2224,10 +2251,10 @@ the topic's current name/icon/etc; change the name, save — header updates.
 Click "Archive" — badge should reflect archived state when you navigate
 back to `/topics` (the list page's Active/Archived split).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add components/web/AddExpensesToTopicModal.web.tsx "app/topics/[id].web.tsx" app/_layout.tsx
+git add components/web/AddExpensesToTopicModal.web.tsx "app/topics/[id].web.tsx" "app/topics/[id].tsx" app/_layout.tsx
 git commit -m "(feature) web: Topic detail page + Add Expenses picker
 
 Total Spent card (with target-budget progress bar when set), category
@@ -2237,112 +2264,36 @@ deletes the expense). Add Expenses picker: search, date-range/
 unassigned filter chips, day-grouped checklist that diffs against
 current membership on save rather than a blind full-replace.
 
+Includes the app/topics/[id].tsx native stub (pulled forward from
+Task 10) — without it, Expo Router's route flattener throws on the
+missing platform-fallback and breaks routing for the whole app, not
+just this route (same failure mode discovered during Task 8).
+
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 10: Native stub routes
+### Task 10: Native stub routes (verification-only — both files already created)
+
+**This task's file-creation work no longer exists to do.** Task 8 discovered,
+via a live Playwright run, that Expo Router's route flattener crashes the
+ENTIRE app (every route, not just `/topics`) the instant a `.web.tsx`-only
+file exists with no non-platform fallback — so both native stubs got pulled
+forward and created as soon as their corresponding `.web.tsx` file landed:
+`app/topics.tsx` was created during Task 8 (see that task's commit), and
+`app/topics/[id].tsx` was created during Task 9 Step 4 (a mandatory step in
+that task, not deferred here). This task is now a verification pass
+confirming both are correct and complete, not a file-creation task.
 
 **Files:**
-- Create: `app/topics.tsx`
-- Create: `app/topics/[id].tsx`
+- Verify (already created by Tasks 8 and 9): `app/topics.tsx`, `app/topics/[id].tsx`
 
 **Interfaces:**
-- Consumes: nothing new — copies `app/import-statement.tsx`'s pattern.
-- Produces: native route matches for `topics` and `topics/[id]` so
-  `app/_layout.tsx`'s shared `<Stack>` doesn't 404 on native for these
-  screen names.
+- Consumes: nothing new.
+- Produces: nothing new — confirms what Tasks 8-9 already produced.
 
-- [ ] **Step 1: Write `app/topics.tsx`**
-
-```tsx
-// Native stub. Topics is web-only for v1 — see the design doc. This screen
-// exists only so /topics has SOME route on native: app/_layout.tsx
-// registers every screen in one shared <Stack>, so a web-only file
-// (topics.web.tsx) would otherwise leave native with no match for that
-// name at all. Copies app/import-statement.tsx's exact pattern.
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/theme';
-
-export default function TopicsScreen() {
-  const router = useRouter();
-
-  return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.text} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Topics</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <View style={styles.body}>
-        <View style={styles.iconWrap}>
-          <MaterialCommunityIcons name="folder-multiple-outline" size={28} color={Colors.primary} />
-        </View>
-        <Text style={styles.title}>Available on the web app</Text>
-        <Text style={styles.sub}>
-          Grouping expenses into topics is a web-only feature for now — open
-          Spendee on the web to create and manage topics.
-        </Text>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 14,
-  },
-  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
-  body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
-  iconWrap: {
-    width: 56, height: 56, borderRadius: 18,
-    backgroundColor: Colors.primaryMuted,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 18,
-  },
-  title: { color: Colors.text, fontSize: 17, fontWeight: '700', textAlign: 'center' },
-  sub: { color: Colors.textSecondary, fontSize: 13.5, textAlign: 'center', marginTop: 8, lineHeight: 19 },
-});
-```
-
-- [ ] **Step 2: Write `app/topics/[id].tsx`**
-
-Identical content to `app/topics.tsx` (same stub message applies whether a
-specific topic id was requested or not) — copy the file:
-
-```bash
-cp app/topics.tsx "app/topics/[id].tsx"
-```
-
-Then edit `app/topics/[id].tsx`'s exported function name only, to avoid two
-identically-named default exports confusing anyone grepping the codebase —
-change `export default function TopicsScreen()` to
-`export default function TopicDetailScreen()`.
-
-- [ ] **Step 3: Typecheck**
-
-Run: `npx tsc --noEmit`
-Expected: no errors.
-
-- [ ] **Step 4: Manual verification**
-
-This can only be verified by running the native app (`npm start`, press `i`
-or `a`) since the whole point is native-only behavior — if a simulator/
-device isn't available in this environment, verify instead by confirming
-`app/topics.tsx` and `app/topics/[id].tsx` both exist and export a default
-component, and that `app/_layout.tsx`'s `Stack.Screen name="topics"` /
-`name="topics/[id]"` entries (added in Tasks 8-9) now have a matching file
-on every platform — run:
+- [ ] **Step 1: Confirm both native stub files exist and are correct**
 
 ```bash
 ls app/topics.tsx "app/topics/[id].tsx" app/topics.web.tsx "app/topics/[id].web.tsx"
@@ -2350,18 +2301,40 @@ ls app/topics.tsx "app/topics/[id].tsx" app/topics.web.tsx "app/topics/[id].web.
 
 Expected: all four files listed, no "No such file" errors.
 
-- [ ] **Step 5: Commit**
+Read both `app/topics.tsx` and `app/topics/[id].tsx`. Confirm:
+- Both export a default component (`TopicsScreen` and `TopicDetailScreen`
+  respectively — different names, since two identically-named default
+  exports in the same route tree would confuse anyone grepping the
+  codebase, even though it wouldn't break the build).
+- Both show the same "Available on the web app" message, icon
+  (`folder-multiple-outline`), and layout as `app/import-statement.tsx`'s
+  established pattern.
+- Neither file is byte-identical in a way that would cause a naming
+  collision — they differ only in their exported function's name.
 
-```bash
-git add app/topics.tsx "app/topics/[id].tsx"
-git commit -m "(feature) native: stub routes for Topics ('available on the web app')
+- [ ] **Step 2: Typecheck**
 
-Copies import-statement.tsx's exact pattern — required because
-app/_layout.tsx registers every screen name in one shared Stack, so
-a web-only route left unregistered on native would 404 instead of
-falling back gracefully.
+Run: `npx tsc --noEmit`
+Expected: no errors.
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
+- [ ] **Step 3: Manual verification**
+
+This can only be fully verified by running the native app (`npm start`,
+press `i` or `a`) since the whole point is native-only behavior — if a
+simulator/device isn't available in this environment, the Step 1 file/route
+check plus a clean typecheck is the available substitute. If a simulator
+IS available: navigate to `/topics` and `/topics/<any-id>` on native and
+confirm both render the "Available on the web app" stub rather than
+crashing or 404ing.
+
+- [ ] **Step 4: Nothing to commit**
+
+If Step 1's `ls` and read-through found both files already correct (the
+expected outcome, since Tasks 8 and 9 already created and committed them),
+there is no new change to commit for this task — it closes as a verification
+pass with no diff. If Step 1 finds either file missing, malformed, or with a
+naming collision, fix it now and commit that fix with a message explaining
+what Task 10's verification caught.
 ```
 
 ---
