@@ -112,7 +112,10 @@ export default function TopicDetailScreenWeb() {
       </View>
 
       <View style={styles.addExpensesRow}>
-        <Pressable style={styles.btnPrimary} onPress={() => setAddModalOpen(true)}>
+        <Pressable
+          style={[styles.btnPrimary, topic.archived && styles.btnPrimaryDisabled]}
+          onPress={() => setAddModalOpen(true)}
+          disabled={topic.archived}>
           <MaterialCommunityIcons name="plus" size={15} color={Colors.onPrimary} />
           <Text style={styles.btnPrimaryText}>Add Expenses</Text>
         </Pressable>
@@ -236,6 +239,7 @@ const styles = StyleSheet.create({
 
   addExpensesRow: { alignItems: 'flex-start', marginBottom: 22 },
   btnPrimary: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.primary, borderRadius: 11, paddingHorizontal: 15, paddingVertical: 9 },
+  btnPrimaryDisabled: { opacity: 0.5 },
   btnPrimaryText: { color: Colors.onPrimary, fontSize: 12.5, fontWeight: '800' },
 
   summaryRow: { flexDirection: 'row', gap: 14, marginBottom: 24 },
