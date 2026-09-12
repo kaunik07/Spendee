@@ -45,15 +45,34 @@ CREATE TABLE IF NOT EXISTS public.topic_expenses (
 ALTER TABLE public.topics          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.topic_expenses  ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "topics_own" ON public.topics;
 CREATE POLICY "topics_own" ON public.topics
   FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
+-- WITH CHECK also verifies that expense_id/topic_id actually reference rows
+-- owned by the same caller — auth.uid() = user_id alone only constrains the
+-- user_id column on the row being inserted, so without these EXISTS clauses
+-- a client could insert {user_id: me, topic_id: my own topic, expense_id:
+-- someone else's expense}: the FK to public.expenses(id) only requires the
+-- row to exist, not that the inserter owns it.
+DROP POLICY IF EXISTS "topic_expenses_own" ON public.topic_expenses;
 CREATE POLICY "topic_expenses_own" ON public.topic_expenses
-  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (
+    auth.uid() = user_id
+    AND EXISTS (SELECT 1 FROM public.expenses e WHERE e.id = expense_id AND e.user_id = auth.uid())
+    AND EXISTS (SELECT 1 FROM public.topics t WHERE t.id = topic_id AND t.user_id = auth.uid())
+  );
 
 -- ── Realtime ──────────────────────────────────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE
-  public.topics, public.topic_expenses;
+-- ALTER PUBLICATION ... ADD TABLE errors (42710) if the table is already a
+-- publication member, so re-running this migration would fail without the
+-- guard — same idempotency concern as the CREATE POLICY statements above.
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.topics, public.topic_expenses;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$;
 
 -- ── Indexes ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_topics_user            ON public.topics(user_id);
