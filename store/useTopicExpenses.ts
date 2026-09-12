@@ -79,9 +79,17 @@ export function useTopicExpenses(userId: string | null, storageMode: StorageMode
   }, [userId, storageMode, refreshKey]);
 
   const addExpensesToTopic = useCallback(async (topicId: string, expenseIds: string[]) => {
-    if (expenseIds.length === 0) return;
+    // Dedupe against existing membership before inserting: the table has a
+    // UNIQUE (topic_id, expense_id) constraint, and a duplicate insert raises
+    // a 23505 that syncQueue.ts's flushQueue() treats as a fatal, queue-head
+    // error — stalling ALL of this user's pending syncs, not just this one.
+    // This is the single chokepoint for both call sites (the picker modal
+    // and the bulk-select "Add to topic" popover) plus double-click.
+    const existingIds = new Set(memberships.filter((m) => m.topicId === topicId).map((m) => m.expenseId));
+    const newIds = expenseIds.filter((id) => !existingIds.has(id));
+    if (newIds.length === 0) return;
     const now = Date.now();
-    const newRows: TopicExpenseMembership[] = expenseIds.map((expenseId, i) => ({
+    const newRows: TopicExpenseMembership[] = newIds.map((expenseId, i) => ({
       id: Crypto.randomUUID(),
       topicId,
       expenseId,
