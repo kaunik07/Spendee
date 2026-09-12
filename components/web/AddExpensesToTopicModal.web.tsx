@@ -4,7 +4,7 @@
 // never touched.
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import WebModal from '@/components/web/WebModal.web';
 import { Colors, getCategoryById } from '@/constants/theme';
 import { formatSignedAmount } from '@/lib/money';
@@ -26,7 +26,7 @@ type FilterKey = 'all' | 'dateRange' | 'unassigned';
 
 export default function AddExpensesToTopicModal({ topicId, topicName, dateStart, dateEnd, visible, onClose }: Props) {
   const { expenses } = useExpenseContext();
-  const { memberships, addExpensesToTopic, removeExpenseFromTopic } = useTopicExpensesContext();
+  const { memberships, loading, addExpensesToTopic, removeExpenseFromTopic } = useTopicExpensesContext();
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -41,8 +41,12 @@ export default function AddExpensesToTopicModal({ topicId, topicName, dateStart,
 
   // Seed the selection from current membership exactly once per open —
   // not on every membership change, or a save-in-flight would reset the
-  // user's in-progress toggles.
-  if (visible && !seeded) {
+  // user's in-progress toggles. Gated on `!loading`: seeding from a
+  // `currentIds` snapshot taken while memberships hasn't finished its
+  // initial fetch yet would seed an empty `selected`, and on Save the
+  // diff against the (by-then correct) `currentIds` would read every
+  // pre-existing membership as "unchecked" and delete it.
+  if (visible && !seeded && !loading) {
     setSelected(new Set(currentIds));
     setSeeded(true);
   }
@@ -102,6 +106,12 @@ export default function AddExpensesToTopicModal({ topicId, topicName, dateStart,
       title={`Add expenses to "${topicName}"`}
       subtitle="Search or scroll your expenses and check the ones that belong here"
       width={560}>
+      {loading ? (
+        <View style={styles.loadingState}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      ) : (
+      <>
       <View style={styles.searchRow}>
         <TextInput
           style={styles.searchInput}
@@ -172,11 +182,14 @@ export default function AddExpensesToTopicModal({ topicId, topicName, dateStart,
           </Pressable>
         </View>
       </View>
+      </>
+      )}
     </WebModal>
   );
 }
 
 const styles = StyleSheet.create({
+  loadingState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   searchRow: { paddingHorizontal: 22, paddingVertical: 14 },
   searchInput: { backgroundColor: Colors.surfaceContainer, borderWidth: 1, borderColor: Colors.border, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 10, color: Colors.text, fontSize: 13 },
 
