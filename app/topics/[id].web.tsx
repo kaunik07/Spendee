@@ -3,7 +3,7 @@
 // for the summary, a drawer for edit.
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AddExpensesToTopicModal from '@/components/web/AddExpensesToTopicModal.web';
 import EditTopicDrawer from '@/components/web/EditTopicDrawer.web';
@@ -31,6 +31,17 @@ export default function TopicDetailScreenWeb() {
 
   const topic = topics.find((t) => t.id === id);
 
+  // useTopics' `loading` flips true on every refetch (a realtime event, a
+  // sync-queue flush, calling refresh() after an edit) — not just the first
+  // load. Gating the full-page spinner on that raw flag meant every remove/
+  // archive/add action on this screen replaced the whole page with a
+  // spinner for the round-trip. hasLoadedOnce latches true the first time
+  // topics has genuinely resolved, so only the true first paint (a fresh
+  // page load / hard refresh) shows the spinner — later refetches just
+  // re-render in place, same as every other screen in this app.
+  const hasLoadedOnce = useRef(false);
+  if (!loading) hasLoadedOnce.current = true;
+
   const topicExpenses = useMemo(
     () => (topic ? expensesForTopic(topic.id, memberships, expenses) : []),
     [topic, memberships, expenses],
@@ -42,7 +53,7 @@ export default function TopicDetailScreenWeb() {
     ? topicExpenses.filter((e) => e.category === categoryFilter)
     : topicExpenses;
 
-  if (loading) {
+  if (loading && !hasLoadedOnce.current) {
     return (
       <View style={styles.centerState}>
         <ActivityIndicator color={Colors.primary} size="large" />
