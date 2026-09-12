@@ -64,6 +64,8 @@ export default function ExpensesScreenWeb() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [topicPickerOpen, setTopicPickerOpen] = useState(false);
+  const [topicPopoverPos, setTopicPopoverPos] = useState({ top: 0, left: 0 });
+  const topicPickerBtnRef = useRef<View>(null);
   const [newTopicDrawerOpen, setNewTopicDrawerOpen] = useState(false);
   const [addedFlash, setAddedFlash] = useState<string | null>(null);
 
@@ -71,6 +73,17 @@ export default function ExpensesScreenWeb() {
     setSelectMode((v) => !v);
     setSelectedIds(new Set());
     setTopicPickerOpen(false);
+  };
+
+  // Same measure-at-open-time pattern as openDatePopover below: the popover
+  // is rendered inside a full-screen Modal, so its coordinates are
+  // window-relative — it has to be positioned off the trigger button's
+  // actual on-screen position, not a hardcoded offset from the page corner.
+  const openTopicPicker = () => {
+    topicPickerBtnRef.current?.measureInWindow((x, y, _w, height) => {
+      setTopicPopoverPos({ top: y + height + 8, left: x });
+      setTopicPickerOpen(true);
+    });
   };
 
   const toggleSelected = (id: string) => {
@@ -202,8 +215,9 @@ export default function ExpensesScreenWeb() {
             <>
               <Text style={styles.bulkCount}>{selectedIds.size} selected</Text>
               <Pressable
+                ref={topicPickerBtnRef}
                 style={[styles.bulkAddBtn, selectedIds.size === 0 && styles.bulkAddBtnDisabled]}
-                onPress={() => setTopicPickerOpen(true)}
+                onPress={openTopicPicker}
                 disabled={selectedIds.size === 0}>
                 <Text style={styles.bulkAddBtnText}>Add to topic ▾</Text>
               </Pressable>
@@ -290,7 +304,7 @@ export default function ExpensesScreenWeb() {
           against this file's own working datePopover precedent). */}
       <Modal transparent visible={topicPickerOpen} animationType="fade" onRequestClose={() => setTopicPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setTopicPickerOpen(false)}>
-          <Pressable style={styles.topicPopover} onPress={() => {}}>
+          <Pressable style={[styles.topicPopover, { top: topicPopoverPos.top, left: topicPopoverPos.left }]} onPress={() => {}}>
             {topics.filter((t) => !t.archived).map((t) => (
               <Pressable key={t.id} style={styles.topicPopoverItem} onPress={() => handleAddToExistingTopic(t.id, t.name)}>
                 <Text style={styles.topicPopoverIcon}>{t.icon}</Text>
@@ -483,7 +497,7 @@ const styles = StyleSheet.create({
   rowCheckboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
 
   topicPopover: {
-    position: 'absolute', top: 60, left: 0, width: 240,
+    position: 'absolute', width: 240,
     backgroundColor: Colors.surfaceContainerHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: 14,
     paddingVertical: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.35, shadowRadius: 30, elevation: 10,
   },
