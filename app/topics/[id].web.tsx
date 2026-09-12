@@ -4,7 +4,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AddExpensesToTopicModal from '@/components/web/AddExpensesToTopicModal.web';
 import EditTopicDrawer from '@/components/web/EditTopicDrawer.web';
 import WebDonutChart from '@/components/web/WebDonutChart';
@@ -21,7 +21,7 @@ export default function TopicDetailScreenWeb() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  const { topics, updateTopic, deleteTopic } = useTopicsContext();
+  const { topics, loading, updateTopic, deleteTopic } = useTopicsContext();
   const { memberships, removeExpenseFromTopic } = useTopicExpensesContext();
   const { expenses } = useExpenseContext();
 
@@ -42,7 +42,24 @@ export default function TopicDetailScreenWeb() {
     ? topicExpenses.filter((e) => e.category === categoryFilter)
     : topicExpenses;
 
-  if (!topic) return null;
+  if (loading) {
+    return (
+      <View style={styles.centerState}>
+        <ActivityIndicator color={Colors.primary} size="large" />
+      </View>
+    );
+  }
+
+  if (!topic) {
+    return (
+      <View style={styles.centerState}>
+        <Text style={styles.notFoundText}>Topic not found</Text>
+        <Pressable style={styles.btnPrimary} onPress={() => router.push('/topics')}>
+          <Text style={styles.btnPrimaryText}>Back to Topics</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   const pct = topic.targetAmount && topic.targetAmount > 0 ? (total / topic.targetAmount) * 100 : null;
   const remaining = topic.targetAmount !== null ? topic.targetAmount - total : null;
@@ -202,6 +219,9 @@ export default function TopicDetailScreenWeb() {
 }
 
 const styles = StyleSheet.create({
+  centerState: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingVertical: 80 },
+  notFoundText: { color: Colors.textSecondary, fontSize: 15, fontWeight: '600' },
+
   crumb: { color: Colors.outline, fontSize: 12, marginBottom: 14 },
   crumbBold: { color: Colors.textSecondary, fontWeight: '600' },
 
